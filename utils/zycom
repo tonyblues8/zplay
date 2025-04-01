@@ -1,0 +1,529 @@
+#!/bin/bash
+# $Id: nprcommonfuns,v 1.2 2001/05/16 03:36:56 metrica Exp $
+#
+# Shell script containing common functions
+#
+# Functions:
+# 	check_pid 	PID_FILE	Test for a process running
+# 	log 		LOG_MESSAGE	Write a log message to the log file
+#       log_start_process		Write a process start message
+#       log_end_process			Write a process end message
+#	pingable	MACHINE		Test to see if the machine is pingable
+#	copy		SRC DEST	Copies the source to the destination file
+#	move		SRC DEST	Moves the source to the destination file
+#	symlink		SRC DEST	Creates a symbolic link from the source to destination file
+#	hardlink	SRC DEST	Creates a hard link from the source to destination file
+#	remove		FILE		Removes the file
+#	create		FILE		Create an empty file
+#	makedir		DIR		Creates a directory
+#	copyandroll	LOGFILE REMOTE_MACHINE REMOTE_USER REMOTE_LOGFILE
+#					Rolls the log and copies it to a
+#					remote machine
+#	housekeeping			Removes old files
+#	chk_spc		DIR LIMIT	Checks free space on target directory.
+
+
+#
+# In general these functions check return codes and if there is a problem
+# they exit. If anything goes wrong with the scripts then all logfiles and
+# email should be checked.
+
+#
+# Change History
+#==========================================================================  
+# rb 21/11/97
+# Exit code in check_pid changed from 0 to -1: data transfer scripts
+# trap 0 therefore pid was being removed by a second process.
+#
+
+check_pid() \
+{
+  PID_FILE=$1
+
+  # Check for the existence of the file and if it exists
+  # see if the PID contained in it belongs to a process
+  if [ -s ${PID_FILE} ]
+  then
+    read OLD_PID < ${PID_FILE}
+    if [ "${OLD_PID}" ]
+    then
+      kill -0 ${OLD_PID} >&- 2>&-
+      if [ $? -eq 0 ]
+      then 
+        # The process exists, so we cannot continue
+	echo "process is running,we cannot continue,PLS wait the process finished."
+	exit 1 
+      fi
+
+      # There is no process there, or it is a process
+      # that we don't own. Either way we can continue
+    fi
+  fi
+
+  # store out pid in the pid file
+  echo $$ > ${PID_FILE}
+  
+  # Check that the PID file now exists. If it does not we need to log
+  # an error (chicken and egg, if the PID does not exist it is proably
+  # due to either permissions or file system full, in which case the log
+  # will fail!!!)
+  if [ ! -s ${PID_FILE} ]
+  then
+    log "Unable to create the PID file (${PID_FILE} for process $$"
+    exit 1
+  fi
+
+  return 0
+}
+
+
+
+log() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${LOGFILE}" ]
+  then
+    #DATE=`date +"%h %y %d %H:%M:%S"`
+    DATE=`date "+%Y年%m月%d日%H点%M分%S秒"`
+	echo "[$$] ($DATE) $*" >> ${LOGFILE}
+    if [ $? -ne 0 ]
+    then
+      echo "Failed to log ($*) to ${LOGFILE}"
+      exit 1
+    fi
+  fi
+
+  return 0
+}
+
+log_error() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${ERRORLOGFILE}" ]
+  then
+    #DATE=`date +"%h %y %d %H:%M:%S"`
+    DATE=`date "+%Y年%m月%d日%H点%M分%S秒"`
+	echo "[$$] ($DATE) $*" >> ${ERRORLOGFILE}
+    if [ $? -ne 0 ]
+    then
+      echo "Failed to log ($*) to ${ERRORLOGFILE}"
+      exit 1
+    fi
+  fi
+
+  return 0
+}
+
+log_start_process() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${AUDITLOGFILE}" ]
+  then
+    PROCESS=${PROCESS:-${1:-process}}
+    log "Starting $PROCESS (Pid $$)"
+  fi
+
+  return 0
+}
+
+log_end_process() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${AUDITLOGFILE}" ]
+  then
+    PROCESS=${PROCESS:-${1:-process}}
+    log "$PROCESS (Pid $$) Finished. Status $errno"
+  fi
+
+  return 0
+}
+
+pingable() \
+{
+  HOST=$1
+
+  # First of all find ping
+  PING=""
+
+  for possible_dir in /etc /sbin /usr/sbin /usr/etc /bin
+  do
+    if [ -x ${possible_dir}/ping ]
+    then
+      PING="${possible_dir}/ping"
+      break
+    fi
+  done
+
+  if [ ! "$PING" ]
+  then
+    echo "unable to find ping" >&2
+    exit 1
+  fi
+
+  #  $PING -n $HOST 64 1 >/dev/null 2>&1
+  # -n option do not work on hp-ux
+  $PING $HOST 64 1 >/dev/null 2>&1
+  return $?
+}
+
+		audit() \
+		{
+		  if [ "${LOGGING}" -a "${AUDITFILE}" ]
+		  then
+		    DATE=`date "+%Y年%m月%d日%H点%M分%S秒"`
+		    echo "[$$] ($DATE) $*" >> ${AUDITFILE}
+		  fi
+		
+		  return 0
+		}
+		
+		change_dir() \
+		{
+		thisdir="$1"
+		#IFS_old=$IFS
+		#IFS=$'\n'
+		filelist="`find $1/* -type d -iname \* -follow -print|sort -r`"
+		
+		  for f in $filelist
+		  do
+		    #if [ -d "$f" ];
+		    #then
+		    	if [ "$f" == "$thisdir" ];
+		    	then
+		    		audit "不需改名目录"
+		    		#return 0
+		    	else
+		      newfilename="${f##*/}"
+		      newfilenamef="${f%/*}"
+		      newfilename1="`echo -e $newfilename|perl -p -e 's/^\[(.*)\]\.|^\【(.*)\】\.|\[(.*)\]|\【(.*)\】|\[(.*)\]|\s+|\.mkv$|\.mp4$|\.avi$|\.rmvb$|\.rm$|\.mp3$|\.mov$//g'`"
+		      
+		      olddir="$newfilenamef/$newfilename"
+		      newdir="$newfilenamef/$newfilename1"
+		       if [ "$newfilename" != "$newfilename1" ];
+		       then
+		  				mv -f "$olddir" "$newdir"
+                                                mv "$newdir/"* "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+		  				mv "$newdir/"*".mp4" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+		  				mv "$newdir/"*".mkv" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+		  				mv "$newdir/"*".rmvb" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+		  				mv "$newdir/"*".mov" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                mv "$newdir/"*".avi" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                mv "$newdir/"*".rm" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+						mv "$newdir/"*".ts" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                mv "$newdir/"*".m4a" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                mv "$newdir/"*".m4v" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                mv "$newdir/"*".m4b" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                mv "$newdir/"*".m4p" "$newfilenamef" </dev/null >/dev/null 2>$AUDITFILE
+                                                rm -rf "$newdir"
+		  				#echo -e "目录改名成功==>$olddir"
+						audit "目录改名成功==>$olddir"
+		  	else
+		  			#echo "无需改名"
+                                mv "$f/"* "$1/" </dev/null >/dev/null 2>$AUDITFILE
+				mv "$f/"*".mp4" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+            			mv "$f/"*".mkv" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+            			mv "$f/"*".rmvb" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+            			mv "$f/"*".mov" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".ts" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".avi" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".rm" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".m4a" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".m4v" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".m4b" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+                                mv "$f/"*".m4p" "$1/" </dev/null >/dev/null 2>$AUDITFILE
+            			rm -rf "$f" </dev/null >/dev/null 2>$AUDITFILE
+            			audit "目录无需改名,文件已经成功拷贝到$1"
+		  		#return 0
+		  	fi
+		    		##sudo -s mv "$f/*" "$1/" 2> /dev/null
+		    		#p=$f
+						##echo "$1 $2 $p"
+						#func $f $thisdir $p
+		        #
+		    		#sudo rm -rf "$f" 2> /dev/null
+		    	fi
+		    #fi
+		  done
+		#IFS=$IFS_old
+	#	return 0
+		}
+
+filetime() \
+{
+line="$1"
+		mon=`stat "$line"|awk '{print $21}'|sed -e 's/\"//g'|sed -e 's/Jan/01/g'|sed -e 's/Feb/02/g'|sed -e 's/Mar/03/g'|sed -e 's/Apr/04/g'|sed -e 's/May/05/g'|sed -e 's/Jun/06/g'|sed -e 's/Jul/07/g'|sed -e 's/Aug/08/g'|sed -e 's/Sep/09/g'|sed -e 's/Oct/10/g'|sed -e 's/Nov/11/g'|sed -e 's/Dec/12/g'`
+		year=`stat "$line"|awk '{print $24}'|sed -e 's/\"//g'`
+		day=`stat "$line"|awk '{print $22}'`
+		hour=`stat "$line"|awk '{print $23}'`
+		timelag="$year-$mon-$day $hour"
+		timelagf="$year-$mon-$day"
+		
+	echo "$timelag"
+}
+
+deleteempty() {
+del=${2}
+dir1=${1}
+    IFS_old=$IFS
+    IFS=$'\n'
+  find ${1:-.} -mindepth 1 -maxdepth 1 -type d | while read -r dir
+#find ${1:-.} -mindepth 1 -maxdepth 1 -type d |grep -E -v "^."| while read -r dir
+  do
+    #if [[ -z "$(find "$dir" -mindepth 1 -type f)" ]] >/dev/null
+    if [[ -z "$(find "$dir" -mindepth 1 -type f ! -name ".*")" ]] >/dev/null
+    then
+      echo "$dir is Empty!"
+	if [[ "$del" == "on" ]];then
+	  echo "ok$del"
+          #rm -rf ${dir} 2>&- && echo "Empty, Deleted!" || echo "Delete error"
+	fi
+    fi
+    if [ -d ${dir} ]
+    then
+      deleteempty "$dir" "$del"
+    fi
+  done
+IFS=$IFS_old
+}
+
+add_to_file() \
+{
+	FILENAME=$1
+	NEWLINE=$2
+
+	if [ -f $FILENAME ]
+    then
+       echo $NEWLINE >>$FILENAME
+    else
+       echo $NEWLINE >$FILENAME
+    fi
+	return 0
+}
+
+copy() \
+{
+  SRC=$1
+  DST=$2
+
+  MSG="`cp $SRC $DST 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to copy $SRC to $DST ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+move() \
+{
+  SRC=$1
+  DST=$2
+
+  MSG="`mv $SRC $DST 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to move $SRC to $DST ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+symlink() \
+{
+  SRC=$1
+  DST=$2
+
+  MSG="`ln -s $SRC $DST 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to symbolically link $SRC to $DST ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+hardlink() \
+{
+  SRC=$1
+  DST=$2
+
+  MSG="`ln $SRC $DST 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to link $SRC to $DST ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+remove() \
+{
+  FILE=$1
+
+  MSG="`rm -f $FILE 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to remove $FILE ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+
+create() \
+{
+  FILE=$1
+
+  MSG="`touch $FILE 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to create $FILE ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+
+makedir() \
+{
+  DIR=$1
+
+  MSG="`mkdir $DIR 2>&1`"
+  if [ $? -ne 0 ]
+  then
+    log "Failed to create $DIR ($MSG)"
+    exit 1
+  fi
+
+  return 0
+}
+
+
+# Roll over the log files - but remember to copy the existing one
+copyandroll()
+{
+  SRC_LOGNAME=$1
+  REMOTE_MACHINE=$2
+  REMOTE_USER=$3
+  REMOTE_LOGNAME=$4
+
+  SRC_LOGFILE=${METRICA_DIR}/logs/${SRC_LOGNAME}
+  TMP_FILE=${METRICA_DIR}/tmp/tidy_up.$$
+
+  # Take a current snapshot
+  move ${SRC_LOGFILE} ${TMP_FILE}
+
+  rcp ${TMP_FILE} ${REMOTE_USER}@${REMOTE_MACHINE}:${REMOTE_LOGNAME}
+  if [ $? -eq 0 ]
+  then
+    log "Log file copied to remote system"
+  else
+    log "Problem copying log file to remote sytem"
+  fi
+
+  # Roll over the log files
+  new_age=10
+  for age in 9 8 7 6 5 4 3 2 1
+  do
+    if [ -f ${METRICA_DIR}/logs/old/${SRC_LOGNAME}.${age} ]
+    then
+      move ${METRICA_DIR}/logs/old/${SRC_LOGNAME}.${age} \
+	${METRICA_DIR}/logs/old/${SRC_LOGNAME}.${new_age}
+    fi
+    new_age=$age
+  done
+  move ${TMP_FILE} ${METRICA_DIR}/logs/old/${SRC_LOGNAME}.1
+  log "Rolled over ${SRC_LOGNAME}"
+
+  return 0
+}
+
+housekeeping()
+{
+  TMP_FILE=${METRICA_DIR}/tmp/housekeeping.$$
+
+  ${AWK} -f ${METRICA_DIR}/common/nprhk.awk \
+    -v OUTPUT_FILE=${TMP_FILE}  \
+    -v DEBUG=${DEBUG} \
+    ${METRICA_DIR}/etc/housekeeping
+
+  if [ "$DEBUG" ]
+  then
+    sh -x ${TMP_FILE}
+  else
+    sh ${TMP_FILE}
+    remove ${TMP_FILE}
+  fi
+  return 0
+}
+
+
+chk_spc()
+{
+  DIR=$1
+  LIMIT=$2
+
+  freespc=`${DF} ${DIR} | tail -1 | ${AWK} '{print $4}'`
+  if [ ${freespc} -lt ${LIMIT} ]
+  then
+    log "Insufficient disk space to run process, free ${freespc}, limit ${LIMIT}"
+    exit 1
+  fi
+
+  return 0
+}
+
+chk_spc1()
+{
+  DIR=$1
+  LIMIT=$2
+
+  freespc=`df -k ${DIR} | tail -1 | nawk '{print $4}'`
+  if [ ${freespc} -lt ${LIMIT} ]
+  then
+    log_error "Insufficient disk space on $DIR to run process, free ${freespc}, limit ${LIMIT}"
+    exit 1
+  fi
+
+  return 0
+}
+
+ftpable() \
+{
+  HOST=$1
+  USER=$2
+  PASSWORD=$3
+
+  # First of all find ping
+  FTP=""
+
+  for possible_dir in /etc /sbin /usr/sbin /usr/etc /bin
+  do
+    if [ -x ${possible_dir}/ftp ]
+    then
+      FTP="${possible_dir}/ftp"
+      break
+    fi
+  done
+
+  if [ ! "$FTP" ]
+  then
+    echo "unable to find ftp" >&2
+    exit 1
+  fi
+
+  #  $PING -n $HOST 64 1 >/dev/null 2>&1
+  # -n option do not work on hp-ux
+  #$PING $HOST 64 1 >/dev/null 2>&1
+$FTP -in << END >/dev/null 2>&1
+	open $HOST
+	user $USER $PASSWORD
+	ls -lrt
+	bye
+END
+
+  return $?
+}
+

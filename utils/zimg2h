@@ -1,0 +1,92 @@
+#!/bin/bash
+#set -x
+export LANG=C
+IFS_old=$IFS
+IFS=$'\n'  # 设置换行符为字段分隔符
+shelldir=$(pwd)  # 获取当前脚本的目录
+xxd -v > /dev/null 2>&1 || { echo "No xxd,brew install xxd"; exit 1; }
+iCounter=0  # 初始化计数器
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    echo "::Usage : you must go to img filedir                  ::"
+    echo "::Usage : zimg2h                                      ::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+# 遍历目录中的文件，查找 PNG、JPG、ICO 和 ICNS 文件
+for line in $(find "$shelldir" -name "*" -type f -follow -print | grep -E -i "png$|jpg$|ico$|icns$" | sort -n)
+do
+  if [[ ! -f "$line" ]]; then
+    # 如果没有找到有效文件，则打印错误信息并退出
+    echo "$shelldir 目录下没有图片或图标文件(png|jpg|ico|icns)::::::::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    echo "::Usage : you must go to img filedir                  ::"
+    echo "::Usage : zimg2h                                      ::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    exit 1  # 跳出脚本
+  else
+    # 设置文件路径和输出文件名
+    PNG_FILE="$line"
+    filepath="${line%.*}"  # 去掉文件扩展名，得到文件的基本路径
+    filedir=$(dirname "$line")
+    savedir=$filedir"/h"
+    if [[ ! -f "$savedir" ]]; then
+        mkdir $savedir
+    fi
+    #HEADER_FILE#="$filepath.h"
+    #CPP_FILE="$filepath.cpp"
+    BASENAME=$(basename "$PNG_FILE" .${PNG_FILE##*.})  # 去除文件扩展名
+    thtag0=$(echo "$filedir" | sed -e 's/\//_/g')
+    thtag=$thtag0"_"
+    #echo "$thtag"
+
+    savefilepath0="${BASENAME%.*}"
+    savefilepathcpp=$savefilepath0".cpp"
+    savefilepathh=$savefilepath0".h"
+    HEADER_FILE=$savedir"/"$savefilepathh
+    CPP_FILE=$savedir"/"$savefilepathcpp
+
+    # 使用 tr 将文件名转换为大写
+    BASENAME_UPPER=$(echo "$BASENAME" | tr 'a-z' 'A-Z')
+
+    VAR_NAME="${BASENAME}_png"
+
+    # 生成 .h 文件
+    echo "#ifndef ${BASENAME_UPPER}_H" > "$HEADER_FILE"  # 使用大写宏命名
+    echo "#define ${BASENAME_UPPER}_H" >> "$HEADER_FILE"
+    echo "" >> "$HEADER_FILE"
+    echo "#include <cstddef>" >> "$HEADER_FILE"  # 包含 size_t
+    echo "" >> "$HEADER_FILE"
+    echo "extern unsigned char $VAR_NAME[];" >> "$HEADER_FILE"
+    echo "extern unsigned int ${VAR_NAME}_len;" >> "$HEADER_FILE"
+    echo "" >> "$HEADER_FILE"
+    echo "#endif // ${BASENAME_UPPER}_H" >> "$HEADER_FILE"
+
+    # 获取文件大小
+    FILE_SIZE=$(stat -f %z "$PNG_FILE")
+
+    # 获取 .h 文件的 basename（文件名，不包含路径）
+    HEADER_BASENAME=$(basename "$HEADER_FILE")
+
+    # 生成 .cpp 文件，使用 .h 文件的 basename
+    #CPP_FILE="$shelldir/$HEADER_BASENAME.cpp"  # 将 .cpp 文件保存为与 .h 同名
+
+    echo "#include \"$HEADER_BASENAME\"" > "$CPP_FILE"  # 使用相对路径引用 .h 文件
+
+    # 使用 xxd 转换图片为 C++ 数组，并清理掉冗余的部分
+    xxd -i "$PNG_FILE" >> "$CPP_FILE"
+
+    # 替换 thtag 字符串
+    #sed -i "s/$thtag//g" "$CPP_FILE"
+    sed -i '' "s#$thtag##g" "$CPP_FILE"
+
+    # 将文件大小赋值给变量 mt_png_len
+    #echo "unsigned int ${VAR_NAME}_len = $FILE_SIZE;" >> "$CPP_FILE"
+
+    echo "Generated $HEADER_FILE and $CPP_FILE."
+
+    # 更新计数器，并打印当前处理进度
+    iCounter=$((iCounter + 1))
+    #echo "$iCounter:`date "+%Y年%m月%d日%H点%M分%S秒"` - $line finished..."
+    echo "$iCounter:- $line finished..."
+  fi
+done
+
+exit 0

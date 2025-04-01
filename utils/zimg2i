@@ -1,0 +1,99 @@
+#!/bin/bash
+#set -x
+export LANG=C
+IFS_old=$IFS
+IFS=$'\n'  # 设置换行符为字段分隔符
+shelldir=$(pwd)  # 获取当前脚本的目录
+magick -version > /dev/null 2>&1 || { echo "No magick,brew install magick"; exit 1; }
+#iconutil > /dev/null 2>&1 || { echo "No iconutil,brew install iconutil"; exit 1; }
+iCounter=0  # 初始化计数器
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    echo "::brew install magick                                 ::"
+    echo "::Usage : you must go to img filedir                  ::"
+    echo "::Usage : zimg2i                                      ::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+# 遍历目录中的文件，查找 PNG、JPG、ICO 和 ICNS 文件
+for line in $(find "$shelldir" -name "*" -type f -follow -print | grep -E -i "png$|jpg$" | sort -n)
+do
+  if [[ ! -f "$line" ]]; then
+    # 如果没有找到有效文件，则打印错误信息并退出
+    echo "$shelldir 目录下没有图片或图标文件(png|jpg)::::::::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    echo "::brew install magick                                 ::"
+    echo "::Usage : you must go to img filedir                  ::"
+    echo "::Usage : zimg2i                                      ::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    exit 1  # 跳出脚本
+  else
+    # 设置文件路径和输出文件名
+    #convert jq1024.png -resize 16x16 ./jq.iconset/icon_16x16.png
+    PNG_FILE="$line"
+    filepath="${line%.*}"  # 去掉文件扩展名，得到文件的基本路径
+    filedir=$(dirname "$line")
+    savedir=$filedir"/icon.iconset"
+    if [[ -f "$savedir" ]]; then
+        rm -rf $savedir
+        mkdir $savedir
+    else
+        mkdir $savedir
+    fi
+    #if [[ ! -f "$savedir" ]]; then
+    #    mkdir $savedir
+    #fi
+    #HEADER_FILE#="$filepath.h"
+    #CPP_FILE="$filepath.cpp"
+    BASENAME=$(basename "$PNG_FILE" .${PNG_FILE##*.})  # 去除文件扩展名
+    i16=$savedir"/icon_16x16.png"
+    i162=$savedir"/icon_16x16@2x.png"
+
+    i32=$savedir"/icon_32x32.png"
+    i322=$savedir"/icon_32x32@2x.png"
+
+    i64=$savedir"/icon_64x64.png"
+    i642=$savedir"/icon_64x64@2x.png"
+
+    i128=$savedir"/icon_128x128.png"
+    i1282=$savedir"/icon_128x128@2x.png"
+
+    i256=$savedir"/icon_256x256.png"
+    i2562=$savedir"/icon_256x256@2x.png"
+
+    i512=$savedir"/icon_512x512.png"
+    i5122=$savedir"/icon_512x512@2x.png"
+
+    i1024=$savedir"/icon_1024x1024.png"
+    i10242=$savedir"/icon_1024x1024@2x.png"
+
+    magick $line -resize 16x16! $i16
+    magick $line -resize 32x32! $i162
+
+    magick $line -resize 32x32! $i32
+    magick $line -resize 64x64! $i322
+
+    magick $line -resize 64x64! $i64
+    magick $line -resize 128x128! $i642
+
+    magick $line -resize 128x128! $i128
+    magick $line -resize 256x256! $i1282
+
+    magick $line -resize 256x256! $i256
+    magick $line -resize 512x512! $i2562
+
+    magick $line -resize 512x512! $i512
+    magick $line -resize 1024x1024! $i5122
+
+    magick $line -resize 1024x1024! $i1024
+    magick $line -resize 2048x2048! $i10242
+
+    iconutil -c icns $savedir -o $filepath".icns"
+
+    rm -rf $savedir
+
+    # 更新计数器，并打印当前处理进度
+    iCounter=$((iCounter + 1))
+    #echo "$iCounter:`date "+%Y年%m月%d日%H点%M分%S秒"` - $line finished..."
+    echo "$iCounter:- $line finished..."
+  fi
+done
+
+exit 0

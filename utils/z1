@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# coding=utf-8
+import json
+import os
+import sys
+import fnmatch
+#from urllib.parse import quote
+if len(sys.argv) < 3 or not sys.argv[1] or not sys.argv[2]:
+    print("Usage: 此脚本负责生成目录树json文件")
+    print("Usage: tt.py gen_dir output_file")
+    print("Usage: tt.py '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos' '/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree.json'")
+    sys.exit()
+else:
+    path = sys.argv[1]
+    outputfile = sys.argv[2]
+
+
+#path = '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2'
+exclude_patterns = ("*.sh", "*.txt", "*.jpg", "*.png", "*.html", "*.part", "*.ytdl", "*.py", "*.wbep", "download.*", "*.temp*", "*.tmp*")
+include_patterns = ("*.mp4", "*.mov", "*.mp3", "*.divx", "*.mkv", "*.flv", "*.m4v", "*.m4a", "*.avi", "*.wav", "*.wmv", "*.rmvb", "*.webm", "*.cue", "*.ape", "*.flac")
+
+def matches_patterns(file_name, patterns):
+    return any(fnmatch.fnmatch(file_name, pattern) for pattern in patterns)
+def path_to_dict(path):
+    d = {'name': os.path.basename(path)}
+    if os.path.isdir(path):
+        d['type'] = "directory"
+        d['contents'] = [path_to_dict(os.path.join(path, x)) for x in os.listdir(path)]
+        temphtml = os.path.join(path, 'index.html')
+        if not os.path.exists(temphtml):
+            temppic = os.path.join(path, 'cover.jpg')
+            if os.path.exists(temppic):
+                html_content = "<!DOCTYPE html>\n<html>\n<head>\n    <title>Zplayer</title>\n</head>\n<body>\n<a href='https://mv.6deng.cn:8443/mobile/app'><img style='max-height:100vh;max-width:100vw;' src='cover.jpg'><br>点击下载Zplayer</a></body>\n</html>"
+            else:
+                html_content = "<!DOCTYPE html>\n<html>\n<head>\n    <title>Zplayer</title>\n</head>\n<a href='https://mv.6deng.cn:8443/mobile/app'>点击下载Zplayer</a><body>\n</body>\n</html>"
+            with open(temphtml, 'w') as file:
+                file.write(html_content)
+    else:
+        if matches_patterns(os.path.basename(path), exclude_patterns):
+            return None
+        if not matches_patterns(os.path.basename(path), include_patterns):
+            return None
+        d['type'] = "file"
+    return d
+def path_to_dict_noblank(path):
+    d = {'name': os.path.basename(path)}
+    if os.path.isdir(path):
+        d['type'] = "directory"
+        d['contents'] = []
+        paths = [os.path.join(path, x) for x in os.listdir(path)]
+        temphtml = os.path.join(path, 'index.html')
+        if not os.path.exists(temphtml):
+            temppic = os.path.join(path, 'cover.jpg')
+            if os.path.exists(temppic):
+                html_content = "<!DOCTYPE html>\n<html>\n<head>\n    <title>Zplayer</title>\n</head>\n<body>\n<a href='https://mv.6deng.cn:8443/mobile/app'><img style='max-height:100vh;max-width:100vw;' src='cover.jpg'><br>点击下载Zplayer</a></body>\n</html>"
+            else:
+                html_content = "<!DOCTYPE html>\n<html>\n<head>\n    <title>Zplayer</title>\n</head>\n<a href='https://mv.6deng.cn:8443/mobile/app'>点击下载Zplayer</a><body>\n</body>\n</html>"
+            with open(temphtml, 'w') as file:
+                file.write(html_content)
+        for p in paths:
+            c = path_to_dict_noblank(p)
+            if c is not None:
+                d['contents'].append(c)
+        if not d['contents']:
+            return None
+    else:
+        if matches_patterns(os.path.basename(path), exclude_patterns):
+            return None
+        if not matches_patterns(os.path.basename(path), include_patterns):
+            return None
+        d['type'] = "file"
+    return d
+
+with open(outputfile, 'w', encoding='utf-8') as file:
+    file.write("[")
+    #json.dump(path_to_dict_noblank(path), file, ensure_ascii=False, indent=1)
+    json.dump(path_to_dict_noblank(path), file, ensure_ascii=False, separators=(',', ':'))
+    file.write("]")
+
+print("全部数据写入到文件： %s"%outputfile)
+
+

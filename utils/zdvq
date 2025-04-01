@@ -1,0 +1,1255 @@
+#!/usr/bin/env python3
+import os
+import sys
+import json
+import signal
+import atexit
+import subprocess
+import time
+import glob
+import re
+import numpy as np
+import librosa
+import faiss
+from pydub import AudioSegment
+from moviepy import *
+import threading
+import contextlib
+from dejavu import Dejavu
+#ffmpeg -f concat -safe 0 -i file_list.txt -c copy 3.mp4 -y
+#ffmpeg -i /Users/tony/sampleaudio/sample_audio3_wav.wav -ar 44100 -ac 2 /Users/tony/sampleaudio/sample_audio3_aac.aac
+#from moviepy.video.io.concatenate_videoclips import concatenate_videoclips
+#from moviepy import *
+import warnings
+warnings.filterwarnings("ignore")
+from concurrent.futures import ThreadPoolExecutor
+#sys.stdout = open(os.devnull, 'w')
+#sys.stderr = sys.stdout  # 将标准错误也重定向到标准输出
+# 配置参数
+
+# 禁用输出缓冲
+sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)  # 设置行缓冲
+sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)  # 设置行缓冲
+# 或者设置环境变量禁用所有输出缓冲
+os.environ["PYTHONUNBUFFERED"] = "1"
+
+
+SAMPLE_RATE = 44100  # 统一采样率
+SEGMENT_DURATION = 10  # 分段时长（秒）如果内容变化较快（例如剪辑频繁），较短的段可以提高匹配的精度。
+STEP_SIZE = 3       # 滑动窗口步长（秒）过大的步长(例如 >5秒)可能会错过某些匹配点，尤其是在音频的细节变化频繁时。可能会降低精度，特别是在长时间视频中。
+MFCC_DIM = 15         # MFCC维度
+THRESHOLD = 100        # 相似度阈值（欧氏距离）值设得太低可能导致只返回极少数非常相似的结果，设得太高则可能返回过多无用的结果。
+#
+#config = {
+#        "database": {
+#            "host": "192.168.3.4",
+#            "user": "dejavu",
+#            "password": "xiongqian",
+#            "database": "dejavu"
+#        },
+#        "database_type": "mysql"
+#}
+
+# 初始化 Dejavu
+#djv = Dejavu(config)
+
+class ThreadSafeFaiss:
+    def __init__(self, index):
+        self.index = index
+        self.lock = threading.RLock()
+
+    def search(self, query, k):
+        with self.lock:
+            return self.index.search(query, k)
+
+@contextlib.contextmanager
+def suppress_all_output():
+    """完全静默所有输出的上下文管理器"""
+    # 备份原始文件描述符
+    original_stdout_fd = sys.stdout.fileno()
+    original_stderr_fd = sys.stderr.fileno()
+    saved_stdout_fd = os.dup(original_stdout_fd)
+    saved_stderr_fd = os.dup(original_stderr_fd)
+
+    # 打开空设备
+    with open(os.devnull, 'w') as devnull:
+        # 重定向标准输出和错误
+        os.dup2(devnull.fileno(), original_stdout_fd)
+        os.dup2(devnull.fileno(), original_stderr_fd)
+
+        try:
+            # 设置 FFmpeg 日志级别（新版本方法）
+            os.environ["FFMPEG_LOG_LEVEL"] = "quiet"  # 关键配置
+            os.environ["IMAGEIO_FFMPEG_LOGLEVEL"] = "0"  # 完全静默
+            yield
+        finally:
+            # 恢复原始文件描述符
+            os.dup2(saved_stdout_fd, original_stdout_fd)
+            os.dup2(saved_stderr_fd, original_stderr_fd)
+            os.close(saved_stdout_fd)
+            os.close(saved_stderr_fd)
+
+def load_video_silently(path):
+    with suppress_all_output():
+        # 新版本推荐写法（自动关闭资源）
+        return VideoFileClip(path)  # 禁用音频处理
+def extract_features(audiofile_path):
+    """从音频文件提取特征和对应时间戳"""
+    y, sr = librosa.load(audiofile_path, sr=SAMPLE_RATE)
+    duration = librosa.get_duration(y=y, sr=sr)
+
+    features = []
+    timestamps = []
+
+    # 使用滑动窗口分割音频
+    for start in np.arange(0, duration - SEGMENT_DURATION, STEP_SIZE):
+        end = start + SEGMENT_DURATION
+        if end > duration:
+            break
+
+        # 提取片段
+        start_sample = int(start * sr)
+        end_sample = int(end * sr)
+        segment = y[start_sample:end_sample]
+
+        # 计算MFCC
+        mfcc = librosa.feature.mfcc(y=segment, sr=sr, n_mfcc=MFCC_DIM)
+        mfcc = np.mean(mfcc, axis=1)  # 取均值作为特征向量
+
+        features.append(mfcc)
+        timestamps.append((start, end))
+
+    return np.array(features, dtype='float32'), timestamps
+
+def build_index(sample_dir):
+    """构建FAISS索引"""
+    d = MFCC_DIM  # 特征向量的维度
+    quantizer = faiss.IndexFlatL2(d)  # 使用L2距离的基础索引
+    index = faiss.IndexFlatL2(d)  # 由于只有5个音频，直接使用简单的L2距离索引
+
+    features_list = []
+    for filename in os.listdir(sample_dir):
+        if filename.endswith(('.wav', '.mp3', '.m4a', '.aac')):
+            path = os.path.join(sample_dir, filename)
+            features, _ = extract_features(path)
+            if features.shape[0] > 0:
+                features_list.append(features)
+
+    # 将所有特征添加到索引中
+    if features_list:
+        features_array = np.vstack(features_list).astype('float32')
+        index.add(features_array)  # 添加到索引
+    else:
+        raise ValueError("没有足够的音频特征来构建索引")
+    index = ThreadSafeFaiss(index)
+    return index
+def extract_featuresM(audiofile_path):
+    """从音频文件提取特征和对应时间戳"""
+    y, sr = librosa.load(audiofile_path, sr=SAMPLE_RATE)
+    duration = librosa.get_duration(y=y, sr=sr)
+
+    features = []
+    timestamps = []
+
+    # 使用滑动窗口分割音频
+    for start in np.arange(0, duration - SEGMENT_DURATION, STEP_SIZE):
+        end = start + SEGMENT_DURATION
+        start = start
+        end = end
+        if end > duration:
+            break
+
+        # 提取片段
+        start_sample = int(start * sr)
+        end_sample = int(end * sr)
+        segment = y[start_sample:end_sample]
+
+        # 计算MFCC
+        mfcc = librosa.feature.mfcc(y=segment, sr=sr, n_mfcc=MFCC_DIM)
+        mfcc = np.mean(mfcc, axis=1)  # 取均值作为特征向量
+
+        features.append(mfcc)
+        timestamps.append((start, end))
+
+    return np.array(features, dtype='float32'), timestamps
+def build_indexM(sample_dir):
+    """构建FAISS索引，使用倒排索引"""
+    d = MFCC_DIM  # 特征向量的维度
+    quantizer = faiss.IndexFlatL2(d)  # 使用L2距离的基础索引
+    index = faiss.IndexIVFFlat(quantizer, d, 100, faiss.METRIC_L2)  # 100 是倒排簇的数量，faiss.METRIC_L2 是欧氏距离
+
+    # 训练索引
+    # 假设你有一小部分样本来训练索引（可以使用前几条数据）
+    training_data = np.random.random((4000, d)).astype('float32')
+    index.train(training_data)
+
+    features_list = []
+    timestamps_list = []
+
+    for filename in os.listdir(sample_dir):
+        if filename.endswith(('.wav', '.mp3', '.m4a', '.aac')):
+            path = os.path.join(sample_dir, filename)
+            features, _ = extract_features(path)
+            if features.shape[0] > 0:
+                features_list.append(features)
+
+    # 将所有特征添加到索引中
+    features_array = np.vstack(features_list).astype('float32')
+    index.add(features_array)
+    index = ThreadSafeFaiss(index)
+    return index
+
+def build_index0(sample_dir):
+    """构建FAISS索引"""
+    index = faiss.IndexFlatL2(MFCC_DIM)  # 使用L2距离
+
+    for filename in os.listdir(sample_dir):
+        if filename.endswith(('.wav', '.mp3', '.m4a', '.aac')):
+            path = os.path.join(sample_dir, filename)
+            features, _ = extract_features(path)
+            if features.shape[0] > 0:
+                index.add(features)
+
+    return index
+
+## 创建 FAISS 索引
+#d = 128  # 向量维度
+#index = faiss.IndexFlatL2(d)  # 使用 L2 距离的平坦索引
+#index.add(np.random.random((1000, d)).astype('float32'))  # 添加一些示例数据
+#
+## 创建线程安全的 FAISS 索引
+#thread_safe_index = ThreadSafeFaiss(index)
+#
+## 使用线程池并行查询
+#from concurrent.futures import ThreadPoolExecutor
+
+def search_and_match(index, features, timestamps):
+    """执行批量查询并返回匹配结果"""
+    #print(f"线程 {threading.current_thread().name} 正在处理 {index}")
+    D, _ = index.search(features, 1)
+    matches = []
+    for i, d in enumerate(D):
+        if d[0] < THRESHOLD:
+            matches.append(timestamps[i])
+    return matches
+
+def find_matches(target_path, index):
+    """在目标文件中查找匹配片段"""
+    # 处理视频文件
+    #if target_path.endswith('.mp4'):
+    #if target_path.endswith('.mp4') or target_path.endswith('.mov'):
+    print(f"正在生成临时音频文件{audio_path}")
+    cmd = [
+        'ffmpeg',
+        '-i', target_path,
+    #    '-c', 'copy',
+        '-v','quiet',
+        '-stats',
+        '-y',
+        audio_path
+    ]
+    subprocess.run(cmd, check=True)
+    target_audio = AudioSegment.from_wav(audio_path)
+    #if target_path.endswith(('.mp4', '.mov')):
+    #    print(f"正在生成临时音频文件{audio_path}")
+    #    #video = load_video_silently(target_path)
+    #    #video.audio.write_audiofile(audio_path, fps=SAMPLE_RATE)
+    #    ##video.audio.write_audiofile(audio_path, fps=SAMPLE_RATE, codec='aac')
+    #    ##target_audio = AudioSegment.from_file(audio_path, format="aac")
+    #    cmd = [
+    #        'ffmpeg',
+    #        '-i', target_path,
+    #    #    '-c', 'copy',
+    #        '-v','quiet',
+    #        '-stats',
+    #        '-y',
+    #        audio_path
+    #    ]
+    #    subprocess.run(cmd, check=True)
+    #    target_audio = AudioSegment.from_wav(audio_path)
+    #    #if video and video is not None:
+    #    #    video.close()
+    #else:
+    #    target_audio = AudioSegment.from_file(target_path)
+
+    print(f"正在目标文件{target_path}中查找匹配片段")
+    #stopprint = threading.Event()
+    ## 启动打印“.”的线程
+    #dot_thread = threading.Thread(target=print_dots, args=(stopprint,))
+    #dot_thread.start()
+
+    # 提取特征
+    features, timestamps = extract_features(target_path)
+
+    # 使用线程池并行查询
+    #with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_timestamp = {executor.submit(search_and_match, index, features, timestamps): timestamp for timestamp in timestamps}
+
+    matches = []
+    for future in future_to_timestamp:
+        result = future.result()  # 获取每个线程的执行结果
+        matches.extend(result)  # 合并所有线程的匹配结果
+
+    #print(f"matches:{matches}")
+    # 合并重叠时间段
+    matches.sort()
+    merged = []
+    for start, end in matches:
+        if not merged:
+            merged.append([start, end])
+        else:
+            last = merged[-1]
+            if start <= last[1]:
+                last[1] = max(last[1], end)
+            else:
+                merged.append([start, end])
+
+    #stopprint.set()
+    #dot_thread.join()
+    merged = [(int(s), int(e)) for s, e in merged]
+    #merged = [(int(s), int(e)) for s, e in merged if int(e) - int(s) > 10]
+    #segments = [(int(s), int(e)) if s <= e else (int(e), int(s)) for s, e in merged]
+    #print(f"merged:{segments}")
+    #return merged, target_audio, video if target_path.endswith('.mp4') else None
+    return merged, target_audio, video if target_path.endswith(('.mp4', '.mov')) else None
+
+def find_matches0(target_path, index):
+    """在目标文件中查找匹配片段"""
+    # 处理视频文件
+    #if target_path.endswith('.mp4'):
+    if target_path.endswith(('.mp4', '.mov')):
+        #video = VideoFileClip(target_path)
+        video = load_video_silently(target_path)
+        #audio_path = "temp_audio.wav"
+        video.audio.write_audiofile(audio_path, fps=SAMPLE_RATE)
+        target_audio = AudioSegment.from_wav(audio_path)
+        if video and video is not None:
+            video.close()
+    else:
+        target_audio = AudioSegment.from_file(target_path)
+
+    # 提取特征
+    features, timestamps = extract_features(target_path)
+
+    # 搜索匹配
+    D, _ = index.search(features, 1)
+    matches = []
+    for i, d in enumerate(D):
+        if d[0] < THRESHOLD:
+            matches.append(timestamps[i])
+
+    # 合并重叠时间段
+    matches.sort()
+    merged = []
+    for start, end in matches:
+        if not merged:
+            merged.append([start, end])
+        else:
+            last = merged[-1]
+            if start <= last[1]:
+                last[1] = max(last[1], end)
+            else:
+                merged.append([start, end])
+
+    #return merged, target_audio, video if target_path.endswith('.mp4') else None
+    return merged, target_audio, video if target_path.endswith(('.mp4', '.mov')) else None
+
+def delete_matched_segments(video_path, merged_segmentst, output_path):
+    """根据合并的时间段删除视频片段"""
+    merged_segments = [(int(start*1), int(end*1)) for start, end in merged_segmentst]
+    print(f"找到匹配时间段：{merged_segments}")
+
+    if not merged_segments:
+        print("没有合并的时间段，原视频未修改。")
+        return  # 如果 merged_segments 为空，直接返回
+
+    filter_complex = []
+
+    # 遍历所有合并的时间段
+    for start, end in merged_segments:
+        # 生成每个时间段的过滤器条件
+        start = abs(start)
+        end = abs(end)
+        filter_complex.append(f"between(t,{start},{end})")
+
+    if filter_complex:
+        # 构建FFmpeg过滤器字符串
+        filter_str = f"select='not({'+'.join(filter_complex)})',setpts=N/FRAME_RATE/TB"
+        filter_stra = f"aselect='not({'+'.join(filter_complex)})',asetpts=N/SR/TB"
+
+        video_filter = f"-vf \"{filter_str}\""
+        audio_filter = f"-af \"{filter_stra}\""
+
+        # 生成FFmpeg命令
+        #command = f"ffmpeg -i {video_path} {video_filter} {audio_filter} -c:v libx264 -crf 23 -preset medium -c:a aac -b:a 128k -movflags +faststart -copyts -reset_timestamps 1 {output_path} -y"
+        command = f"ffmpeg -i {video_path} {video_filter} {audio_filter} -c:v libx264 -movflags +faststart -reset_timestamps 1 -fps_mode vfr -avoid_negative_ts make_zero -y {output_path}"
+
+        print(f"command: {command}")
+
+        try:
+            # 执行命令
+            subprocess.run(command, shell=True, check=True)
+            print(f"视频已修改并输出: {output_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg 命令执行失败: {e}")
+            if os.path.exists(output_path):
+                os.remove(output_path)
+    else:
+        print("没有找到匹配的片段，原视频未修改。")
+        if os.path.exists(output_path):
+                os.remove(output_path)
+
+    # 清理临时文件
+    #if os.path.exists(edited_audio_path):
+    #    os.remove(edited_audio_path)
+    #if video_path.endswith(('.mp4', '.mov')) and os.path.exists(audio_path):
+    #    os.remove(audio_path)
+    if os.path.exists(OUTPUT_FILE):
+        os.remove(TARGET_FILE)
+        os.rename(OUTPUT_FILE, TARGET_FILE)
+    deltempfile()
+
+def remove_segments(target_audio, segments, output_path, target_path, video=None):
+    """删除指定片段并保存"""
+    # 转换为毫秒
+    segments_ms = [(int(s*1000), int(e*1000)) for s, e in segments]
+
+    print(f"找到匹配时间段：{segments_ms}")
+
+    # 从后往前剪切避免位置偏移
+    segments_ms.sort(reverse=True)
+
+    edited_audio = target_audio
+    for start, end in segments_ms:
+        start = start - 200
+        end = end + 2300
+        edited_audio = edited_audio[:start] + edited_audio[end:]
+
+    # 保存结果
+    if output_path.endswith(('.mp4', '.mov')):
+        # 保存编辑后的音频
+        edited_audio.export(edited_audio_path, format="wav")
+        edited_audio_clip = AudioFileClip(edited_audio_path)
+
+        # 处理视频
+        if video is not None:
+            # 删除视频中对应时间段的画面
+            clips = []
+            last_end = 0
+            #for start, end in segments:
+            for start, end in segments_ms:
+                start = start - 200
+                end = end + 2300
+                if start > last_end:
+                    clips.append(video.subclipped(last_end/1000, start/1000))
+                last_end = end
+            if last_end < video.duration * 1000:
+                clips.append(video.subclipped(last_end/1000, video.duration))
+
+            # 合并视频片段
+            final_video = concatenate_videoclips(clips)
+            final_video = final_video.with_audio(edited_audio_clip)
+            #final_video.write_videofile(output_path, codec='libx264',audio_codec='aac')
+            final_video.write_videofile(
+                output_path,  # 视频输出路径
+                codec='libx264',  # 设置视频编码为 libx265
+                audio_codec='aac',  # 设置音频编码为 AAC
+                ffmpeg_params=[     # 传递额外的 FFmpeg 参数
+                    '-strict', 'experimental',  # 允许 AAC 编码
+                    '-movflags', '+faststart',  # 使视频开始播放更快
+                    '-reset_timestamps', '1',  # 重置时间戳
+                    '-vsync', 'vfr',    # 可变帧率
+                    '-avoid_negative_ts', 'make_zero',  # 避免负时间戳
+                    '-y'  # 自动覆盖输出文件
+                ]
+            )
+        else:
+            #edited_audio_clip.write_audiofile(output_path)
+            edited_audio_clip.write_videofile(
+                output_path,  # 视频输出路径
+                codec='libx264',  # 设置视频编码为 libx265
+                audio_codec='aac',  # 设置音频编码为 AAC
+                ffmpeg_params=[     # 传递额外的 FFmpeg 参数
+                    '-strict', 'experimental',  # 允许 AAC 编码
+                    '-movflags', '+faststart',  # 使视频开始播放更快
+                    '-reset_timestamps', '1',  # 重置时间戳
+                    '-vsync', 'vfr',    # 可变帧率
+                    '-avoid_negative_ts', 'make_zero',  # 避免负时间戳
+                    '-y'  # 自动覆盖输出文件
+                ]
+            )
+
+    else:
+        edited_audio.export(output_path, format=output_path.split('.')[-1])
+
+    # 清理临时文件
+    #if os.path.exists(edited_audio_path):
+    #    os.remove(edited_audio_path)
+    #if target_path.endswith(('.mp4', '.mov')) and os.path.exists(audio_path):
+    #    os.remove(audio_path)
+    if os.path.exists(OUTPUT_FILE):
+        os.remove(TARGET_FILE)
+        os.rename(OUTPUT_FILE, TARGET_FILE)
+    deltempfile()
+
+def get_video_duration(file_path):
+    # 使用 ffprobe 获取视频时长
+    result = subprocess.run(
+        ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'format=duration', '-of', 'json', file_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    info = json.loads(result.stdout)
+    duration = float(info['format']['duration'])
+    return duration
+
+def print_dotsbak(stop_event):
+    dots = 20  # 需要显示的点数
+    while not stop_event.is_set():  # 控制循环是否继续
+        for i in range(dots):
+            sys.stdout.write("\r" + "▊" * (i + 1))  # 用 \r 回到行首，并逐渐打印点
+            sys.stdout.flush()  # 确保立即输出
+            time.sleep(0.5)  # 延时，逐个点地打印
+        sys.stdout.write("\r                     ")  # 清空行中的点
+        sys.stdout.flush()
+        time.sleep(0.5)  # 延时，避免无休止地更新
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    time.sleep(0.5)
+
+def print_dots(stop_event):
+    while not stop_event.is_set():  # 控制循环是否继续
+        simple_progress_bar(100)
+        sys.stdout.write("\r                     ")  # 清空行中的点
+        sys.stdout.flush()
+        time.sleep(0.5)  # 延时，避免无休止地更新
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    time.sleep(0.5)
+
+#simple_progress_bar(100)
+def simple_progress_bar(total, width=None):
+    """
+    自适应终端宽度的进度条
+    :param total: 总进度步数
+    :param width: 手动指定宽度（None表示自动检测）
+    """
+    try:
+        # 获取终端宽度（如果运行在非终端环境则抛出异常）
+        term_width = os.get_terminal_size().columns
+    except (OSError, AttributeError):
+        term_width = 60  # 默认宽度
+
+    # 计算可用宽度（保留10字符用于百分比和边框）
+    max_bar_width = term_width - 10
+    if width is None:
+        # 自动计算宽度（至少保留20字符的最小宽度）
+        bar_width = max(max_bar_width, 20)
+    else:
+        # 使用用户指定宽度，但不超过最大可用宽度
+        bar_width = min(width, max_bar_width)
+
+    for i in range(total + 1):
+        percent = i / total
+        # 动态重新检测宽度（应对终端尺寸变化）
+        try:
+            current_term_width = os.get_terminal_size().columns
+            max_bar_width = current_term_width - 10
+            bar_width = min(bar_width, max_bar_width)
+        except:
+            pass
+
+        filled_len = int(bar_width * percent)
+        bar = '█' * filled_len
+        spaces = ' ' * (bar_width - filled_len)
+        # 动态百分比格式（适应不同宽度）
+        percent_str = f"{percent:.0%}"
+        line = f"\r[{bar}{spaces}] {percent_str}"
+
+        # 截断超出终端宽度的内容
+        if len(line) > term_width:
+            line = line[:term_width-4] + "..."
+
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        time.sleep(0.05)
+    print()  # 完成换行
+
+def split_and_concat_video(input_file, output_file, duration, segments):
+    # 生成临时文件列表
+    if not segments:
+        print("没有合并的时间段，原视频未修改。")
+        return  # 如果 merged_segments 为空，直接返回
+    #segments = [(int(s), int(e)) for s, e in segments]
+    #segmentsp = [(int(s), int(e), seconds_to_hms(int(s)),seconds_to_hms(int(e)), int(e)-int(s)) for s, e in segments]
+
+    segments = [(int(s), int(e)) for s, e in segments if s < e and s > 5]  # 排除0到20秒的片段
+    segmentsp = [(int(s), int(e), seconds_to_hms(int(s)), seconds_to_hms(int(e)), int(e)-int(s)) for s, e in segments]
+    print(f"{YELLOW}找到匹配时间段：{segmentsp}{RESET}")
+    temp_files = []
+    segment_list = []
+    # 生成第一部分：0到a0
+    if segments:
+        a0, b0 = segments[0]
+        cmd = [
+            'ffmpeg',
+            '-i', input_file,
+            '-ss', '0',
+            '-t', str(abs(a0 - 2)),
+            '-c', 'copy',
+            '-v','quiet',
+            #'-reset_timestamps', '1',
+            #'-vf', 'setpts=PTS-STARTPTS',
+            #'-af', 'asetpts=PTS-STARTPTS',
+            '-y',
+            f'{output_file}_0.mp4'
+        ]
+        if a0 > 5:
+            print(f"正在分割视频：{output_file}_0.mp4")
+            subprocess.run(cmd, check=True)
+            temp_files.append(f'{output_file}_0.mp4')
+            segment_list.append((0, a0))
+        ##if a0 == 0 and len(segments) == 1:
+        ##if a0 == 0 and b0 > duration - 180:
+        #if a0 < 13 and b0 > duration - 180:
+        #    cmd = [
+        #        'ffmpeg',
+        #        '-i', input_file,
+        #        '-ss', str(b0),
+        #        #'-t', str(duration - 1),
+        #        '-t', '0',
+        #        '-c', 'copy',
+        #        '-v','quiet',
+        #        #'-reset_timestamps', '1',
+        #        #'-vf', 'setpts=PTS-STARTPTS',
+        #        #'-af', 'asetpts=PTS-STARTPTS',
+        #        '-y',
+        #        f'{output_file}_0.mp4'
+        #    ]
+        #else:
+        #    cmd = [
+        #        'ffmpeg',
+        #        '-i', input_file,
+        #        '-ss', '0',
+        #        '-t', str(abs(a0 - 2)),
+        #        '-c', 'copy',
+        #        '-v','quiet',
+        #        #'-reset_timestamps', '1',
+        #        #'-vf', 'setpts=PTS-STARTPTS',
+        #        #'-af', 'asetpts=PTS-STARTPTS',
+        #        '-y',
+        #        f'{output_file}_0.mp4'
+        #    ]
+        ##if a0 != 0:
+        #if a0 > 13:
+        #    print(f"正在分割视频：{output_file}_0.mp4")
+        #    subprocess.run(cmd, check=True)
+        #    temp_files.append(f'{output_file}_0.mp4')
+        #    segment_list.append((0, a0))
+
+
+    # 生成中间部分
+    #print(f"rangeleng:{len(segments)}")
+    #if len(segments) > 1:
+    for i in range(len(segments)):
+        #if a0 == 0:
+        #    current_b = segments[i][1]
+        #else:
+        #    current_b = segments[i][1] + 5
+        current_b = segments[i][1] + 5
+
+        # 计算结束时间
+        if i < len(segments)-1:
+            next_a = segments[i+1][0]
+            segment_duration = next_a - current_b - 5
+            #if a0 == 0:
+            #    segment_duration = next_a - current_b
+            #else:
+            #    segment_duration = next_a - current_b - 5
+        else:
+            # 最后一个片段
+            #segment_duration = duration - current_b
+            #next_a = segments[i][0]
+            segment_duration = duration - current_b
+            #print(f"{YELLOW}next_a:{next_a}{RESET}")
+            #print(f"{YELLOW}duration:{duration}{RESET}")
+            #if next_a >= duration - 180 and next_a > 0:
+            #    segment_duration = 0
+            #    #print(f"strt:{current_b}")
+            #    #print(f"segment_duration:{segment_duration}")
+            #else:
+            #    segment_duration = duration - current_b
+            #if segment_duration < 0:
+            #    segment_duration = 0
+        if segment_duration <= 0:
+            continue  # 跳过无效的片段
+
+        cmd = [
+            'ffmpeg',
+            '-i', input_file,
+            '-ss', str(current_b),
+            '-t', str(segment_duration),
+            '-c', 'copy',
+            '-v','quiet',
+            #'-reset_timestamps', '1',
+            #'-vf', 'setpts=PTS-STARTPTS',
+            #'-af', 'asetpts=PTS-STARTPTS',
+            '-y',
+            f'{output_file}_{i+1}.mp4'
+        ]
+        if segment_duration > 0:
+            print(f"正在分割视频：{output_file}_{i+1}.mp4")
+            subprocess.run(cmd, check=True)
+            temp_files.append(f'{output_file}_{i+1}.mp4')
+            segment_list.append((current_b, current_b + segment_duration))
+
+    # 写入segment列表文件
+    with open(segmentstxt, 'w') as f:
+        for file in temp_files:
+            f.write(f"file '{os.path.abspath(file)}'\n")
+
+    # 合并视频
+    print(f"{YELLOW}正在合并视频：{output_file}{RESET}")
+    #print(f"H265_TAG: {H265_TAG}")
+    if H265_TAG == 5:
+        print(f"视频编码: h265")
+        concat_cmd = [
+            'ffmpeg',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', segmentstxt,
+            '-c:a', 'aac',
+            '-c:v', 'libx265',
+            '-strict', 'experimental',
+            '-movflags', '+faststart',
+            '-reset_timestamps', '1',
+            '-vf', 'setpts=PTS-STARTPTS',
+            '-af', 'asetpts=PTS-STARTPTS',
+            '-fps_mode', 'vfr',
+            '-avoid_negative_ts', 'make_zero',
+            '-loglevel','quiet',
+            '-x265-params', 'log-level=error',
+            '-stats',
+            '-fflags', '+genpts',
+            '-hide_banner',
+            '-y',
+            output_file
+        ]
+    else:
+        print(f"视频编码: copy")
+        concat_cmd = [
+            'ffmpeg',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', segmentstxt,
+            '-c', 'copy',
+            '-strict', 'experimental',
+            '-movflags', '+faststart',
+            '-reset_timestamps', '1',
+            '-fps_mode', 'vfr',
+            '-avoid_negative_ts', 'make_zero',
+            '-loglevel','quiet',
+            '-x265-params', 'log-level=error',
+            '-stats',
+            '-fflags', '+genpts',
+            '-hide_banner',
+            '-y',
+            output_file
+        ]
+
+    #print(f"正在合并视频：{output_file}.mp4")
+    # 控制打印循环停止的事件
+    #stopprint = threading.Event()
+    ## 启动打印“.”的线程
+    #dot_thread = threading.Thread(target=print_dots, args=(stopprint,))
+    #dot_thread.start()
+    subprocess.run(concat_cmd, check=True)
+    #stopprint.set()
+    #dot_thread.join()
+
+    ## 清理临时文件（可选）
+    #for file in temp_files:
+    #    if os.path.exists(file):
+    #        print(f"删除临时文件:{file}")
+    #        os.remove(file)
+    #if os.path.exists(segmentstxt):
+    #    os.remove(segmentstxt)
+    #if os.path.exists(edited_audio_path):
+    #    os.remove(edited_audio_path)
+    ##if input_file.endswith(('.mp4', '.mov')) and os.path.exists(audio_path):
+    #if os.path.exists(audio_path):
+    #    os.remove(audio_path)
+    if os.path.exists(OUTPUT_FILE):
+        os.remove(TARGET_FILE)
+        os.rename(OUTPUT_FILE, TARGET_FILE)
+    deltempfile()
+
+    print(f"{YELLOW}视频:{TARGET_FILE}处理完成！{RESET}")
+    print(f"{YELLOW}分段信息：{RESET}")
+    for idx, (start, end) in enumerate(segment_list):
+        print(f"\t片段{idx}: {start:.2f}s - {end:.2f}s 时长：{end-start:.2f}s")
+
+def seconds_to_hms(seconds):
+    """将秒数转换为小时:分钟:秒格式"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+
+def delptw(t,w):
+    reals = int(t)
+    reale = int(total_duration) - int(w) - int(t)
+    videocodetag = subprocess.getoutput('ffprobe -v quiet -of csv=p=0 -select_streams v -show_entries stream=codec_name -i "' + encodeFilename(TARGET_FILE) + '"|grep -v png')
+    print(f'[原视频编码]:{videocodetag}')
+    if H265_TAG == 5 and 'hevc' not in videocodetag and 'av1' not in videocodetag and 'vp9' not in videocodetag:
+        print(f'[ffmpeg]:{TARGET_FILE}将用libx265编码,耗时较长,请耐心等待')
+        cmd = [
+            'ffmpeg',
+            '-i', TARGET_FILE,
+            '-ss',str(reals),
+            '-t',str(reale),
+            '-c:a', 'aac',
+            '-c:v', 'libx265',
+            '-strict', 'experimental',
+            '-movflags', '+faststart',
+            '-reset_timestamps', '1',
+            '-vf', 'setpts=PTS-STARTPTS',
+            '-af', 'asetpts=PTS-STARTPTS',
+            '-fps_mode', 'vfr',
+            '-avoid_negative_ts', 'make_zero',
+            '-loglevel','quiet',
+            '-x265-params', 'log-level=error',
+            '-stats',
+            '-fflags', '+genpts',
+            '-hide_banner',
+            '-y'
+        ]
+    else:
+        print(f'[ffmpeg]:{TARGET_FILE}视频编码:copy')
+        cmd = [
+            'ffmpeg',
+            '-i', TARGET_FILE,
+            '-ss',str(reals),
+            '-t',str(reale),
+            '-c','copy',
+            '-movflags', '+faststart',
+            '-reset_timestamps', '1',
+            '-avoid_negative_ts', 'make_zero',
+            '-loglevel','quiet',
+            '-x265-params', 'log-level=error',
+            '-stats',
+            '-fflags', '+genpts',
+            '-hide_banner',
+            '-y'
+        ]
+    cmd.append(encodeArgument(OUTPUT_FILE))
+    subprocess.run(cmd, check=True)
+    print(f"{YELLOW}视频:{TARGET_FILE}处理完成！{RESET}")
+    if os.path.exists(OUTPUT_FILE):
+        os.remove(TARGET_FILE)
+        os.rename(OUTPUT_FILE, TARGET_FILE)
+    deltempfile()
+
+def encodeFilename(s, for_subprocess=False):
+    assert isinstance(s, str)
+    return s
+
+def decodeFilename(b, for_subprocess=False):
+    return b
+
+def detect_file_encoding(file_path):
+    try:
+        result = subprocess.getoutput(f'/opt/homebrew/bin/enca {file_path}|head -1')
+        encoding = result.split(';')[1].strip().lower()
+        if encoding:
+            return encoding
+        return None
+    except Exception as e:
+        print(f"Error detecting encoding: {e}")
+        return None
+
+def getvideowh(video):
+    ffprobe_path = os.path.join(os.path.expanduser('~'), 'zsprundir/bin/ffprobe')
+    result_height = subprocess.getoutput(os.path.expanduser('~')+'/zsprundir/bin/ffprobe -i "' + video +'" -v quiet -select_streams v -show_entries stream=height -of csv=p=0| head -n 1')
+    myheight = result_height.strip()
+    result_width = subprocess.getoutput(os.path.expanduser('~')+'/zsprundir/bin/ffprobe -i "' + video +'" -v quiet -select_streams v -show_entries stream=width -of csv=p=0| head -n 1')
+    mywidth = result_width.strip()
+    if myheight and mywidth:
+        return (int(mywidth), int(myheight))
+    return None
+
+def convert_to_utf8(file_path):
+    encoding = detect_file_encoding(file_path)
+    if encoding is None:
+        print(f"Could not detect encoding for {file_path}.")
+        return
+    if encoding == 'utf-8':
+        return
+    print(f"Detected encoding: {encoding}")
+    with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
+        content = f.read()
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"File {file_path} has been converted to UTF-8 encoding.")
+
+def encodeArgument(s):
+    return s if isinstance(s, str) else s.decode('ascii')
+
+def addass():
+    args = [
+        encodeArgument('ffmpeg'),
+        encodeArgument('-i'), encodeArgument(TARGET_FILE),
+        encodeArgument('-c:a'),encodeArgument('copy'),
+        encodeArgument('-movflags'), encodeArgument('+faststart'),
+        encodeArgument('-reset_timestamps'), encodeArgument('1'),
+        encodeArgument('-avoid_negative_ts'), encodeArgument('make_zero'),
+        encodeArgument('-loglevel'),encodeArgument('quiet'),
+        encodeArgument('-stats'),
+        encodeArgument('-fflags'), encodeArgument('+genpts'),
+        encodeArgument('-hide_banner'),
+        encodeArgument('-y')
+    ]
+
+    videocodetag = subprocess.getoutput('ffprobe -v quiet -of csv=p=0 -select_streams v -show_entries stream=codec_name -i "' + encodeFilename(TARGET_FILE) + '"|grep -v png')
+    if ('hevc' in videocodetag or 'av1' in videocodetag or 'vp9' in videocodetag) and not ADD_TAG == "ad":
+        args.extend([encodeArgument('-c:v'), encodeArgument('copy')])
+    elif ADD_TAG == "ad":
+        print(f'[ffmpeg]:{TARGET_FILE}正在添加字幕和片头,需要重新编码,耗时较长,请耐心等待')
+        if H265_TAG == 5:
+            args.extend([encodeArgument('-c:v'), encodeArgument('libx265')])
+            print(f'[ffmpeg]:{TARGET_FILE}将用libx265编码,耗时较长,请耐心等待')
+            args.extend([encodeArgument('-x265-params'), encodeArgument('log-level=error')])
+        else:
+            print(f'[ffmpeg]:{TARGET_FILE}将用libx264编码,请耐心等待')
+            args.extend([encodeArgument('-c:v'), encodeArgument('libx264')])
+        dimensions=getvideowh(TARGET_FILE)
+        if dimensions:
+            mywidth, myheight = dimensions
+        else:
+            mywidth=1920
+            myheight=1080
+        mywidth=str(mywidth).strip()
+        myheight=str(myheight).strip()
+
+        addvideo = ADD_VIDEO_PATH
+        #print(f"addvideo: {addvideo}")
+        if len(addvideo) != 0 and not os.path.isfile(addvideo):
+            print(f"片头视频文件不存在: {ADD_VIDEO_PATH}，已设置为系统默认片头视频。")
+            addvideo = os.path.expanduser('~')+'/zsprundir/source/logo.mp4'
+        addass = ADD_ASS_PATH
+        asstempfile = f"{TARGET_FILE}_temp.ass"
+        #if not addass or not os.path.isfile(addass):
+        if len(addass) != 0 and not os.path.isfile(addass):
+            print(f"字幕文件不存在: {ADD_ASS_PATH}，已设置为系统默认字幕。")
+            addass = os.path.expanduser('~')+'/zsprundir/source/zsp.ass'
+        if len(addass) != 0 and os.path.splitext(addass)[1].lower() != '.ass':
+            #asstempfile = os.path.expanduser('~')+'/zsprundir/source/temp.ass'
+            #asstempfile = f"{TARGET_FILE}_temp.ass"
+            if os.path.exists(asstempfile):os.remove(asstempfile)
+            convert_to_utf8(addass)
+            subprocess.run(os.path.expanduser('~')+'/zsprundir/bin/ffmpeg -v quiet -y -i "'+addass+'" "'+asstempfile+'"', stdin=None, shell=True)
+            #with open(asstempfile, 'r', encoding='utf-8') as m:
+            encoding = detect_file_encoding(asstempfile)
+            with open(asstempfile, 'r', encoding=encoding, errors='ignore') as file:
+                lines = file.readlines()
+
+            with open(asstempfile, 'w', encoding='utf-8') as file:
+                for line in lines:
+                    if line.startswith('Style:'):
+                        line = 'Style: Default,华康新综艺W7(P),16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,0.5,0.5,2,10,10,10,1'
+                    else:
+                        line = re.sub(r"{\\fn.*?}{\\an8}", "", line)
+                        line = re.sub(r"{\\fn}", "", line)
+                        line = re.sub(r"{\\an8}", "", line)
+                        line = re.sub(r"\\N", r"\\N\\n\\N\\n", line)
+                    file.write(line)
+            addass = asstempfile
+        if len(addvideo) == 0 and len(addass) != 0:
+            myaddvideo = "ass=%s"%addass
+            args.extend([encodeArgument('-vf'), encodeArgument(f'{myaddvideo}')])
+        elif len(addass) == 0 and len(addvideo) != 0:
+            myaddfilename = os.path.expanduser('~')+"/zsprundir/source/"+mywidth+"-"+myheight+"-add.mp4"
+            subprocess.run(os.path.expanduser('~')+'/zsprundir/bin/ffmpeg -v quiet -i "'+addvideo+'" -y -c:v libx264 -vf scale='+mywidth+':'+myheight+' "'+myaddfilename+'"', stdin=None, shell=True)
+            myaddvideo = encodeArgument(f"movie={myaddfilename},colorkey=0x000000:0.01:1[wm];[i][wm]overlay=0:0")
+            #myaddvideo = myaddfilename+",colorkey=0x000000:0.01:1[wm];[i][wm]overlay=0:0,ass=%s"%addass
+            args.extend([encodeArgument('-vf'), encodeArgument(f'{myaddvideo}')])
+        elif len(addass) != 0 and len(addvideo) != 0:
+            myaddfilename = os.path.expanduser('~')+"/zsprundir/source/"+mywidth+"-"+myheight+"-add.mp4"
+            subprocess.run(os.path.expanduser('~')+'/zsprundir/bin/ffmpeg -v quiet -i "'+addvideo+'" -y -c:v libx264 -vf scale='+mywidth+':'+myheight+' "'+myaddfilename+'"', stdin=None, shell=True)
+            myaddvideo = encodeArgument(f"movie={myaddfilename},colorkey=0x000000:0.01:1[wm];[i][wm]overlay=0:0,ass={addass}")
+            #myaddvideo = myaddfilename+",colorkey=0x000000:0.01:1[wm];[i][wm]overlay=0:0,ass=%s"%addass
+            args.extend([encodeArgument('-vf'), encodeArgument(f'{myaddvideo}')])
+        else:
+            args.extend([encodeArgument('-c:v'), encodeArgument('copy')])
+            print(f'[警告]:既不加字幕，也不加片头视频，你在玩吗？')
+            return
+    else:
+        if H265_TAG == 5:
+            args.extend([encodeArgument('-c:v'), encodeArgument('libx265')])
+            print(f'[ffmpeg]:{TARGET_FILE}将用libx265编码,耗时较长,请耐心等待')
+            args.extend([encodeArgument('x265-params'),encodeArgument('log-level=error')])
+        else:
+            print(f'[ffmpeg]:{TARGET_FILE}编码方式:copy')
+            args.extend([encodeArgument('-c:v'), encodeArgument('copy')])
+    #if TARGET_FILE.endswith(('.mp4', '.mov')):
+    #    args.extend([encodeArgument('-progress'), encodeArgument('pipe:1')])
+    #else:
+    #    args.append(encodeArgument('-stats'))
+
+    args.append(encodeArgument(OUTPUT_FILE))
+    subprocess.run(args, check=True)
+    print(f"{YELLOW}视频:{TARGET_FILE}处理完成！{RESET}")
+    #if os.path.exists(asstempfile):os.remove(asstempfile)
+    if os.path.exists(OUTPUT_FILE):
+        os.remove(TARGET_FILE)
+        os.rename(OUTPUT_FILE, TARGET_FILE)
+    deltempfile()
+
+def _exit(status=0, *args):
+    for msg in args:
+        #sys.stderr.write(msg)
+        sys.stdout.write(msg)
+        #sys.stderr.flush()
+        sys.stdout.flush()
+    raise SystemExit(status)
+
+def handle_exit(signum, frame):
+    deltempfile()  # 执行清理操作
+    _exit(-1, f"\n[警告]:程序被终止,捕获到信号 {signum}，正在清理资源...\n")
+
+segmentstxt = ""
+edited_audio_path = ""
+audio_path = ""
+OUTPUT_FILE = ""
+
+def deltempfile():
+    global segmentstxt, edited_audio_path, audio_path, OUTPUT_FILE
+
+    def safe_remove(file):
+        if file and os.path.exists(file):
+            sys.stdout.write(f"\n删除临时文件:{file}")
+            sys.stdout.flush()
+            #print(f"删除临时文件:{file}")
+            os.remove(file)
+
+    safe_remove(segmentstxt)
+    safe_remove(edited_audio_path)
+    safe_remove(audio_path)
+    safe_remove(OUTPUT_FILE)
+
+    if OUTPUT_FILE:
+        directory = os.path.dirname(OUTPUT_FILE)
+        if directory and os.path.exists(directory):
+            mp4_temp_files = glob.glob(f"{directory}/*.mp4.mp4_*.mp4")
+            ass_temp_files = glob.glob(f"{directory}/*.mp4_temp.ass")
+            for file in mp4_temp_files:
+                sys.stdout.write(f"\n删除临时文件:{file}")
+                sys.stdout.flush()
+                safe_remove(file)
+            for file in ass_temp_files:
+                sys.stdout.write(f"\n删除临时文件:{file}")
+                sys.stdout.flush()
+                safe_remove(file)
+
+# 监听 `SIGTERM` (kill PID) 和 `SIGINT` (Ctrl+C)
+signal.signal(signal.SIGTERM, handle_exit)
+#signal.signal(signal.SIGKILL, handle_exit)
+signal.signal(signal.SIGINT, handle_exit)  # 也监听 Ctrl+C
+#atexit.register(deltempfile)
+
+if __name__ == "__main__":
+    video = []
+    fileok = False
+    YELLOW = "\033[93m"
+    RESET = "\033[0m"
+    start_time = time.time()
+    if len(sys.argv) < 2 or not sys.argv[1]:
+        print(f"{YELLOW}请输入参数\n去片头、片尾Usage:\n\tzdvq 'tw' <filedir or filepath> pttime pwtime vcodelevel\n\tsample:zdvq 'tw' ./test.mp4 30 50\n\tsample(目录下所有媒体文件,libx265编码):zdvq 'tw' ./out 30 50 5\n\tsample(目录下所有媒体文件,只去片头):zdvq 'tw' ./out 30 0 5{RESET}")
+        print(f"{YELLOW}删除片段(请在$HOME/sampleaudio目录下保存样本音频文件)Usage:\n\tzdvq <filedir or filepath> vcodelevel\n\tsample:zdvq ./test.mp4\n\tsample(目录下所有媒体文件,libx265编码):zdvq ./out 5{RESET}")
+        print(f"{YELLOW}添加字幕和片头Usage:\n\tzdvq 'ad' filepath vcodelevel zmfilepath ptfilepath\n\tsample:zdvq 'ad' ./test.mp4 4 ./test.vtt ./pt.mp4\n\tsample(libx265编码):zdvq 'ad' ./test.mp4 5 ./test.ass ./pt.mp4\n\tsample(只加字幕):zdvq 'ad' ./test.mp4 5 ./test.ass\n\tsample(只加片头):zdvq 'ad' ./test.mp4 5 '' ./testpt.mp4{RESET}")
+    elif sys.argv[1] == "ad":
+        if len(sys.argv) < 5:
+            #print(f"请输入字幕文件路径")
+            _exit(-1, f'[警告]:请输入字幕文件路径\n')
+        ADD_TAG = sys.argv[1]
+        TARGET_FILE_PATH = sys.argv[2]
+        H265_TAG = int(sys.argv[3]) if len(sys.argv) > 3 else 4
+        ADD_ASS_PATH = str(sys.argv[4]) if len(sys.argv) > 4 else ""
+        ADD_VIDEO_PATH = str(sys.argv[5]) if len(sys.argv) > 5 else ""
+        if os.path.exists(TARGET_FILE_PATH):
+            if os.path.isfile(TARGET_FILE_PATH) and TARGET_FILE_PATH.endswith(('.mp4', '.mov')):
+                TARGET_FILE = TARGET_FILE_PATH
+                print(f"准备处理文件: {TARGET_FILE}")
+                fileok = True
+                total_duration = get_video_duration(TARGET_FILE)
+                file_extension = os.path.splitext(TARGET_FILE)[1]
+                OUTPUT_FILE = f"{TARGET_FILE}{file_extension}"
+                try:
+                    addass()
+                    print(f"{YELLOW}文件:{TARGET_FILE}处理完毕。{RESET}")
+                except KeyboardInterrupt:
+                    deltempfile()
+                    _exit(0, '\n[INFO]: 用户主动终止程序。')
+            else:
+                _exit(-1, f"[警告]:{TARGET_FILE_PATH}目录下没有符合条件的文件需要处理:('.mp4', '.mov')\n")
+        else:
+            _exit(-1, f"[警告]:请确保路径存在：{TARGET_FILE_PATH}\n")
+
+    elif sys.argv[1] == "tw":
+        if len(sys.argv) < 5:
+            #print(f"请输入字幕文件路径")
+            _exit(-1, f'[警告]:请输入片头片尾时长(s)\n')
+        TARGET_FILE_PATH = sys.argv[2]
+        pttime = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+        pwtime = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+        H265_TAG = int(sys.argv[5]) if len(sys.argv) > 5 else 4
+        if os.path.exists(TARGET_FILE_PATH):
+            if os.path.isfile(TARGET_FILE_PATH) and TARGET_FILE_PATH.endswith(('.wav', '.mp3', '.m4a', '.mp4', '.aac', '.mov')):
+                TARGET_FILE = TARGET_FILE_PATH
+                print(f"准备处理文件: {TARGET_FILE}")
+                fileok = True
+                total_duration = get_video_duration(TARGET_FILE)
+                file_extension = os.path.splitext(TARGET_FILE)[1]
+                OUTPUT_FILE = f"{TARGET_FILE}{file_extension}"
+                try:
+                    delptw(pttime,pwtime)
+                    print(f"{YELLOW}文件:{TARGET_FILE}处理完毕。{RESET}")
+                except KeyboardInterrupt:
+                    deltempfile()
+                    _exit(0, '\n[INFO]: 用户主动终止程序。')
+            elif os.path.isdir(TARGET_FILE_PATH):
+                print(f"{YELLOW}准备处理如下目录文件{TARGET_FILE_PATH}{RESET}")
+                #for file in os.listdir(TARGET_FILE_PATH):
+                for idx, file in enumerate(os.listdir(TARGET_FILE_PATH)):
+                    filepath = os.path.join(TARGET_FILE_PATH, file)
+                    if os.path.isfile(filepath) and filepath.endswith(('.wav', '.mp3', '.m4a', '.mp4', '.aac', '.mov')):  # 确保是文件
+                        fileok = True
+                        TARGET_FILE = filepath
+                        total_duration = get_video_duration(TARGET_FILE)
+                        file_extension = os.path.splitext(TARGET_FILE)[1]
+                        OUTPUT_FILE = f"{TARGET_FILE}{file_extension}"
+                        print(f"准备处理文件: {YELLOW}{idx}:{RESET}{TARGET_FILE}")
+                        try:
+                            delptw(int(sys.argv[3]),sys.argv[4])
+                            print(f"{YELLOW}目录:{TARGET_FILE_PATH}处理完毕。{RESET}")
+                        except KeyboardInterrupt:
+                            deltempfile()
+                            _exit(0, '\n[INFO]: 用户主动终止程序。')
+            else:
+                #print("路径存在，但不是文件也不是目录")
+                _exit(-1, f"[警告]:路径存在，但不是文件也不是目录\n")
+
+        else:
+            #print(f"请确保路径存在：{TARGET_FILE_PATH}")
+            _exit(-1, f"[警告]:请确保路径存在：{TARGET_FILE_PATH}\n")
+    else:
+        TARGET_FILE_PATH = sys.argv[1]
+        H265_TAG = int(sys.argv[2]) if len(sys.argv) > 2 else 4
+        SAMPLE_DIR1 = os.path.expanduser('~')
+        SAMPLE_DIR1 = "%s/sampleaudio" % SAMPLE_DIR1
+        SAMPLE_DIR = str(sys.argv[3]) if len(sys.argv) > 3 else SAMPLE_DIR1
+        #djv.fingerprint_directory(SAMPLE_DIR, [".mp3",".aac",".wav"])
+        if os.path.exists(TARGET_FILE_PATH) and os.path.exists(SAMPLE_DIR):
+            if os.path.isfile(TARGET_FILE_PATH) and TARGET_FILE_PATH.endswith(('.wav', '.mp3', '.m4a', '.mp4', '.aac', '.mov')):
+                fileok = True
+                TARGET_FILE = TARGET_FILE_PATH
+                total_duration = get_video_duration(TARGET_FILE)
+                file_extension = os.path.splitext(TARGET_FILE)[1]
+                OUTPUT_FILE = f"{TARGET_FILE}{file_extension}"
+                print(f"准备处理文件: {TARGET_FILE}")
+                audio_path = f"{TARGET_FILE}_temp_audio.wav"
+                edited_audio_path = f"{TARGET_FILE}_temp_edited_audio.wav"
+                segmentstxt = f"{SAMPLE_DIR}/segments.txt"
+                try:
+                    # 2. 构建索引
+                    index = build_index(SAMPLE_DIR)
+                    # 3. 查找匹配
+                    matches, target_audio, video = find_matches(TARGET_FILE, index)
+                    #print(f"找到匹配时间段：{matches}")
+                    # 4. 删除片段并保存
+                    if matches:
+                        #remove_segments(target_audio, matches, OUTPUT_FILE, TARGET_FILE, video)
+                        #delete_matched_segments(TARGET_FILE, matches, OUTPUT_FILE)
+
+                        split_and_concat_video(
+                            input_file=TARGET_FILE,
+                            output_file=OUTPUT_FILE,
+                            duration=total_duration,
+                            segments=matches
+                        )
+                    else:
+                        print(f"{YELLOW}未找到匹配时间段,文件:{TARGET_FILE}无需处理。{RESET}")
+                        if os.path.exists(audio_path):
+                            os.remove(audio_path)
+                    print(f"{YELLOW}文件:{TARGET_FILE}处理完毕。{RESET}")
+                except KeyboardInterrupt:
+                    deltempfile()
+                    _exit(0, '\n[INFO]: 用户主动终止程序。')
+
+            elif os.path.isdir(TARGET_FILE_PATH):
+                print(f"{YELLOW}准备处理如下目录文件{TARGET_FILE_PATH}{RESET}")
+                #for file in os.listdir(TARGET_FILE_PATH):
+                for idx, file in enumerate(os.listdir(TARGET_FILE_PATH)):
+                    filepath = os.path.join(TARGET_FILE_PATH, file)
+                    #fileok = False
+                    if os.path.isfile(filepath) and filepath.endswith(('.wav', '.mp3', '.m4a', '.mp4', '.aac', '.mov')):  # 确保是文件
+                        fileok = True
+                        TARGET_FILE = filepath
+                        total_duration = get_video_duration(TARGET_FILE)
+                        file_extension = os.path.splitext(TARGET_FILE)[1]
+                        OUTPUT_FILE = f"{TARGET_FILE}{file_extension}"
+                        print(f"准备处理文件: {YELLOW}{idx}:{RESET}{TARGET_FILE}")
+                        audio_path = f"{TARGET_FILE}_temp_audio.wav"
+                        edited_audio_path = f"{TARGET_FILE}_temp_edited_audio.wav"
+                        segmentstxt = f"{SAMPLE_DIR}/segments.txt"
+                        # 2. 构建索引
+                        try:
+                            index = build_index(SAMPLE_DIR)
+                            # 3. 查找匹配
+                            matches, target_audio, video = find_matches(TARGET_FILE, index)
+                            #print(f"找到匹配时间段：{matches}")
+                            # 4. 删除片段并保存
+                            if matches:
+                                #remove_segments(target_audio, matches, OUTPUT_FILE, TARGET_FILE, video)
+                                #delete_matched_segments(TARGET_FILE, matches, OUTPUT_FILE)
+                                split_and_concat_video(
+                                    input_file=TARGET_FILE,
+                                    output_file=OUTPUT_FILE,
+                                    duration=total_duration,
+                                    segments=matches
+                                )
+                            else:
+                                print(f"{YELLOW}未找到匹配时间段,文件:{TARGET_FILE}无需处理。{RESET}")
+                                if os.path.exists(audio_path):
+                                    os.remove(audio_path)
+                        except KeyboardInterrupt:
+                            deltempfile()
+                            _exit(0, '\n[INFO]: 用户主动终止程序。')
+                if not fileok:
+                    #print(f"{TARGET_FILE_PATH}目录下没有符合条件的文件需要处理:('.wav', '.mp3', '.m4a', '.mp4', '.aac', '.mov')")
+                    _exit(-1, f"[警告]:{TARGET_FILE_PATH}目录下没有符合条件的文件需要处理:('.wav', '.mp3', '.m4a', '.mp4', '.aac', '.mov')\n")
+                else:
+                    print(f"{YELLOW}目录:{TARGET_FILE_PATH}处理完毕。{RESET}")
+            else:
+                #print("路径存在，但不是文件也不是目录")
+                _exit(-1, f"[警告]:路径存在，但不是文件也不是目录\n")
+        else:
+             #print(f"请确保路径存在：{TARGET_FILE_PATH}和{SAMPLE_DIR}")
+             _exit(-1, f"[警告]:请确保路径存在：{TARGET_FILE_PATH}和{SAMPLE_DIR}\n")
+
+    if video and video is not None:
+        video.close()
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time  # 计算运行时间（秒）
+    hours = int(elapsed_time // 3600)  # 计算小时
+    minutes = int((elapsed_time % 3600) // 60)  # 计算分钟
+    seconds = int(elapsed_time % 60)  # 计算秒
+
+    print(f"程序运行了 {hours} 小时 {minutes} 分钟 {seconds} 秒")
+#exclude_keywords = ["exclude", "skip", "ignore"]
+#if not any(keyword in target_path for keyword in exclude_keywords):
+#ffmpeg -i 1a.mp4 -vf "subtitles=1a.vtt:force_style='FontName=汉仪旗黑-95W ExtraBlack,FontSize=20,OutlineColour=&H000000,BorderStyle=1,Outline=0.5'" -y output.mp4
+#ffmpeg -i 1a.mp4 -vf "subtitles=1a.vtt:force_style='FontName=华康新综艺W7(P),FontSize=20,OutlineColour=&H000000,BorderStyle=1,Outline=0.5'" -y output.mp4
+#system_profiler SPFontsDataType|grep "华康"

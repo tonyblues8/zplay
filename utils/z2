@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+# coding=utf-8
+#python3 tt.py "/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos" "f_search.txt"
+import json
+import os
+import sys
+import fnmatch
+import csv
+import subprocess
+#from urllib.parse import quote
+
+if len(sys.argv) < 3 or not sys.argv[1] or not sys.argv[2]:
+    print("Usage: 此脚本负责目录拓扑数据入库")
+    print("Usage: z2 gen_dir output_file")
+    print("Usage: z2 '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos' '/Applications/XAMPP/xamppfiles/htdocs/tp/public/f_search.txt'")
+    sys.exit()
+else:
+    path = sys.argv[1]
+    outputfile = sys.argv[2]
+
+#path = '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2'
+exclude_patterns = ("*.sh", "*.txt", "*.jpg", "*.png", "*.wbep", "download.*")
+include_patterns = ("*.mp4", "*.mov", "*.mp3", "*.divx", "*.mkv", "*.flv", "*.m4v", "*.m4a", "*.avi", "*.wav", "*.wmv", "*.rmvb", "*.webm", "*.cue", "*.ape", "*.flac")
+
+def matches_patterns(file_name, patterns):
+    return any(fnmatch.fnmatch(file_name, pattern) for pattern in patterns)
+
+def path_to_dict(path):
+    d = {'name': os.path.basename(path)}
+    if os.path.isdir(path):
+        d['type'] = "directory"
+        d['contents'] = [path_to_dict(os.path.join(path, x)) for x in os.listdir(path)]
+    else:
+        if matches_patterns(os.path.basename(path), exclude_patterns):
+            return None
+        if not matches_patterns(os.path.basename(path), include_patterns):
+            return None
+        d['type'] = "file"
+    return d
+def path_to_dict_noblank(path):
+    d = {'name': os.path.basename(path)}
+    if os.path.isdir(path):
+        d['type'] = "directory"
+        d['contents'] = []
+        paths = [os.path.join(path, x) for x in os.listdir(path)]
+        for p in paths:
+            c = path_to_dict_noblank(p)
+            if c is not None:
+                d['contents'].append(c)
+        if not d['contents']:
+            return None
+    else:
+        if matches_patterns(os.path.basename(path), exclude_patterns):
+            return None
+        if not matches_patterns(os.path.basename(path), include_patterns):
+            return None
+        d['type'] = "file"
+    return d
+def path_to_dict_file_noblank(file_path, root):
+    if os.path.isdir(file_path):
+        return None
+    if matches_patterns(os.path.basename(file_path), exclude_patterns):
+        return None
+    if not matches_patterns(os.path.basename(file_path), include_patterns):
+        return None
+    relative_path = os.path.relpath(os.path.dirname(file_path), root)
+    image_path = file_path + ".jpg"
+    if os.path.exists(image_path):
+       image_path = image_path
+    else:
+       #image_path = "/images/app.jpg"
+       imgrealdir=os.path.dirname(file_path)
+       image_path = os.path.join(imgrealdir, 'cover.jpg')
+    return [
+        '',
+        file_path.replace("/Applications/XAMPP/xamppfiles/htdocs/tp/public", ""),
+        relative_path,
+        os.path.basename(file_path),
+        image_path.replace("/Applications/XAMPP/xamppfiles/htdocs/tp/public", "")
+    ]
+def path_to_dict_file_noblank0(path):
+    image_path = "%s.jpg"%path
+    if os.path.exists(image_path):
+       image_path = image_path
+    else:
+       #image_path = "/images/app.jpg"
+       imgrealdir=os.path.dirname(file_path)
+       image_path = os.path.join(imgrealdir, 'cover.jpg')
+    return [
+        '',
+        path.replace("/Applications/XAMPP/xamppfiles/htdocs/tp/public", ""),
+        os.path.basename(os.path.dirname(path)),
+        os.path.basename(path),
+        image_path.replace("/Applications/XAMPP/xamppfiles/htdocs/tp/public", ""),
+    ]
+def write_csv(path, outputfile, include_patterns, exclude_patterns):
+    with open(outputfile, 'w', newline='', encoding='utf-8') as file:
+        for root, _, files in os.walk(path):
+            for name in files:
+                file_path = os.path.join(root, name)
+                if matches_patterns(name, include_patterns) and not matches_patterns(name, exclude_patterns):
+                    row = path_to_dict_file_noblank(file_path, path)
+                    if row:
+                        formatted_row = '|;'.join(f'"{item}"' for item in row)
+                        #file.write(f'"{root.split(os.sep)[-1]}",{formatted_row}\n')
+                        file.write(formatted_row + '\n')
+
+def write_csv0(path, outputfile, include_patterns, exclude_patterns):
+    with open(outputfile, 'w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+        for root, _, files in os.walk(path):
+            for name in files:
+                file_path = os.path.join(root, name)
+                if matches_patterns(name, include_patterns) and not matches_patterns(name, exclude_patterns):
+                    row = path_to_dict_file_noblank(file_path)
+                    writer.writerow(row)
+
+def write_csvbak(path, outputfile, include_patterns, exclude_patterns):
+    with open(outputfile, 'w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        for root, _, files in os.walk(path):
+            for name in files:
+                file_path = os.path.join(root, name)
+                if matches_patterns(name, include_patterns) and not matches_patterns(name, exclude_patterns):
+                    row = path_to_dict_file_noblank(file_path)
+                    writer.writerow(row)
+#with open(outputfile, 'w', encoding='utf-8') as file:
+#    #file.write("[\n")
+#    #json.dump(path_to_dict_noblank(path), file, ensure_ascii=False, indent=1)
+#    #json.dump(path_to_dict_noblank(path), file, ensure_ascii=False, separators=(',', ':'))
+#    file.write(path_to_dict_file_noblank(path))
+#    #file.write("\n]\n")
+#
+#print("Content has been written to %s"%outputfile)
+write_csv(path, outputfile, include_patterns, exclude_patterns)
+
+#  mysqlimport
+command = [
+    '/Applications/XAMPP/bin/mysqlimport',
+    '-h', 'localhost',
+    '-u', '',
+    '-p' + '',
+    '--default-character-set=utf8',
+    '--fields-terminated-by=|;',
+    '--fields-enclosed-by="',
+    '--lines-terminated-by=\n',
+    '--local',  #
+    '--ignore',
+    'web',  #
+    outputfile  # CSV
+]
+result = subprocess.call(command)
+#result = subprocess.call(`/Applications/XAMPP/bin/mysqlimport -h localhost -uroot -pxiongqian --default-character-set=utf8 --fields-terminated-by="," --enclosed-by='"' --lines-terminated-by="\n" --local web %s`%outputfile, stdin=None, shell=True)
+#
+if result == 0:
+    print("导入数据成功过： %s."%outputfile)
+else:
+    print(f"导入数据失败 %s return code {result}."%outputfile)
+
+command2 = [
+    '/Applications/XAMPP/bin/mysql',
+    '-h', 'localhost',
+    '-u', 'root',
+    '-p' + 'xiongqian',  # 注意这里是密码
+    '-e', 'use web;CALL `buildround`()'  # 使用 -e 来执行 SQL 语句
+]
+
+# 执行命令
+result2 = subprocess.run(command2, capture_output=True, text=True)
+# 返回值为0表示成功，非0表示失败
+if result2.returncode == 0:
+    print('更新菜单成功')
+else:
+    print('更新菜单失败')

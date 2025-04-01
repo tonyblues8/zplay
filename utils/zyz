@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+import os
+import re
+import subprocess
+import shutil
+import sys
+
+def repsub(text):
+    clean_text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9._\-/:]', '', text)
+    clean_text = clean_text.strip()
+    return clean_text
+
+#traverse_directory('/path/to/directory')
+def traverse_directory(directory):
+    try:
+        for entry in os.listdir(directory):
+            path = os.path.join(directory, entry)
+            print(path)
+            if os.path.isdir(path):
+                traverse_directory(path)
+    except PermissionError:
+        pass
+
+#for path in traverse_directory2('/path/to/directory'):
+#    print(path)
+def traverse_directory2(directory):
+    try:
+        for entry in os.listdir(directory):
+            path = os.path.join(directory, entry)
+            if os.path.isdir(path):
+                yield from traverse_directory2(path)
+            yield path
+    except PermissionError:
+        pass
+def safe_replace(src, dst):
+    dst_dir = os.path.dirname(dst)
+    if not os.path.exists(dst_dir):
+        os.makedirs(dst_dir)
+    if not os.path.isfile(src):
+        print(f"Source file '{src}' not found.")
+        return
+    try:
+        shutil.move(src, dst)
+        print(f"Successfully replaced '{src}' with '{dst}'.")
+    except FileNotFoundError:
+        print(f"Source file '{src}' or target directory '{dst_dir}' not found.")
+    except PermissionError:
+        print(f"Permission denied to move '{src}' to '{dst}'.")
+    except Exception as e:
+        print(f"Failed to replace file '{src}' with '{dst}': {e}")
+
+def remove_directory(dir_path):
+    try:
+        if not os.path.isdir(dir_path):
+            print(f"Directory '{dir_path}' not found.")
+            return
+        # 尝试使用 shutil 删除目录
+        shutil.rmtree(dir_path)
+        print(f"Directory '{dir_path}' and all its contents removed successfully.")
+    except FileNotFoundError:
+        print(f"Directory '{dir_path}' not found.")
+    except PermissionError:
+        print(f"Permission denied to remove '{dir_path}'.")
+    except Exception as e:
+        print(f"Error using shutil.rmtree: {e}")
+        # 如果 shutil 失败，尝试使用 subprocess 删除目录
+        try:
+            if os.name == 'nt':
+                subprocess.run(f'rd /s /q "{dir_path}"', shell=True, check=True)
+            else:
+                subprocess.run(['rm', '-rf', dir_path], shell=True, check=True)
+            print(f"Directory '{dir_path}' removed using subprocess.")
+        except Exception as sub_e:
+            print(f"Error using subprocess: {sub_e}")
+def find_files_and_dirs(directory, include=None, start_with=None, end_with=None):
+    """
+    Recursively find files and directories that match specified criteria, starting from the deepest path.
+
+    Parameters:
+        directory (str): The root directory to start searching.
+        include (list): List of substrings that must be present in the file or directory name.
+        start_with (list): List of prefixes that the file or directory name should start with.
+        end_with (list): List of suffixes that the file or directory name should end with.
+
+    Yields:
+        str: Paths of files and directories that match the criteria.
+    """
+    try:
+        # List all entries in the directory
+        entries = os.listdir(directory)
+
+        # Recursively process subdirectories first
+        subdirs = [os.path.join(directory, entry) for entry in entries if os.path.isdir(os.path.join(directory, entry))]
+        for subdir in subdirs:
+            yield from find_files_and_dirs(subdir, include, start_with, end_with)
+
+        # Process files and directories in the current directory
+        for entry in entries:
+            path = os.path.join(directory, entry)
+            name_matches = (
+                (include is None or any(sub in entry for sub in include)) or
+                (start_with is None or any(entry.startswith(prefix) for prefix in start_with)) or
+                (end_with is None or any(entry.endswith(suffix) for suffix in end_with))
+            )
+            if name_matches:
+                yield path
+    except PermissionError:
+        pass
+
+if len(sys.argv) < 2 or not sys.argv[1]:
+    print("本脚本负责清理目录名和文件名中的非法字符")
+    print("Usage: zyz dirpath")
+    print("Usage: zyz '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2'")
+    sys.exit()
+else:
+    dir_path = sys.argv[1]
+
+#for path in traverse_directory2(dir_path):
+#    mpath = repsub(path)
+#    if mpath != path:
+#        if os.path.isdir(path):
+#            remove_directory(path)
+#        else:
+#            safe_replace(path, mpath)
+# 示例使用
+
+criteria_include = None  # 文件或目录名称中需要包含的子串
+criteria_start_with = None          # 文件或目录名称需要以此字符开头
+criteria_end_with = ['jpg','m4a']            # 文件或目录名称需要以此字符结尾
+
+for path in find_files_and_dirs(dir_path, include=criteria_include, start_with=criteria_start_with, end_with=criteria_end_with):
+    mpath = repsub(path)
+    if mpath != path:
+        if os.path.isdir(path):
+            remove_directory(path)
+        else:
+            safe_replace(path, mpath)
+
+

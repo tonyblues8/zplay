@@ -1,0 +1,15 @@
+#!/bin/bash
+if test $# -lt 1
+then
+	echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+	echo "::Usage : you must goto filedir                       ::"
+	echo "::Usage : zyc file sec                                ::"
+	echo "::Usage : zyc 'test.mp4' 4                            ::"
+	echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+   exit 1
+fi
+if [ ! -f "./cover.jpg" ]; then
+ ffmpeg -i $1  -y -ss $2 -t 1 -s 1920x1080 ./cover.jpg -loglevel quiet
+ cp ./cover.jpg ./$1.jpg
+fi
+exit 0

@@ -1,0 +1,371 @@
+#!/bin/bash
+#./f_search.sh /var/www/v
+##./f_search.sh /Applications/XAMPP/htdocs/v
+#./f_search.sh "/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2"
+#set -x
+#export LANG=C
+#将所有文件设置成当前时间
+#find . -name "*" -exec touch '{}' \;
+
+#tree "/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2/" -C -L 3 -T "Zplayer" -H "https://mv.6deng.cn:9443/wwwvideos2//" -I "node_modules" --charset=utf-8 -o Tree.html
+#(-C)始终打开彩色化,-L 3(向下深入3层级目录) -T(用字符串替换默认的HTML标题和H1标题),-I(忽略node_modules) --charser=gbk(设置HTML输出编码格式,这里设置gbk,中文的话，就会是乱码的,一般都是utf-8), -o(指定输出目录)
+#tree "/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2/" -J | grep -Ev '\.jpg\"\}\,$|\.ass\"\}\,$|\.txt\"\}\,$|\.db\"\}\,$|\.php\"\}\,$|\.sh\"\}\,$|\.json\"\}\,$|\.jpg\"\}$|archive.txt|archive_ygt.txt|downloadcmd.sh|download.mp4|download.m4v|download.mov' > '/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree2.json'
+#jq . input.json > output.json
+#python -m json.tool input.json > output.json
+
+export LC_ALL=C;export LANG=zh_CN.UTF-8
+
+if test $# -lt 1
+then
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+    echo "::此程序负责相应目录的媒体文件生成目录树数据和入库                                    ::"
+    echo "::Usage : z <dir_path>                                                                ::"
+    echo "::Usage : z '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos'               ::"
+    echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+   exit 1
+fi
+if [ ! -d "$1" ]; then
+    echo "数据目录根本不存在:$1"
+    exit 0
+fi
+check_pid() \
+{
+  PID_FILE=$1
+
+  # Check for the existence of the file and if it exists
+  # see if the PID contained in it belongs to a process
+  if [ -s ${PID_FILE} ]
+  then
+    read OLD_PID < ${PID_FILE}
+    if [ "${OLD_PID}" ]
+    then
+      kill -0 ${OLD_PID} >&- 2>&-
+      if [ $? -eq 0 ]
+      then
+        # The process exists, so we cannot continue
+        exit 1
+      fi
+
+      # There is no process there, or it is a process
+      # that we don't own. Either way we can continue
+    fi
+  fi
+
+  # store out pid in the pid file
+  echo $$ > ${PID_FILE}
+
+  # Check that the PID file now exists. If it does not we need to log
+  # an error (chicken and egg, if the PID does not exist it is proably
+  # due to either permissions or file system full, in which case the log
+  # will fail!!!)
+  if [ ! -s ${PID_FILE} ]
+  then
+    log "Unable to create the PID file (${PID_FILE} for process $$"
+    exit 1
+  fi
+
+  return 0
+}
+
+log() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${AUDITLOGFILE}" ]
+  then
+    DATE=`date +"%h %y %d %H:%M:%S"`
+    echo "[$$] ($DATE) $*" >> ${AUDITLOGFILE}
+    if [ $? -ne 0 ]
+    then
+      echo "Failed to log ($*) to ${AUDITLOGFILE}"
+      exit 1
+    fi
+  fi
+
+  return 0
+}
+
+log_error() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${ERRORLOGFILE}" ]
+  then
+    DATE=`date +"%h %y %d %H:%M:%S"`
+    echo "[$$] ($DATE) $*" >> ${ERRORLOGFILE}
+    if [ $? -ne 0 ]
+    then
+      echo "Failed to log ($*) to ${ERRORLOGFILE}"
+      exit 1
+    fi
+  fi
+
+  return 0
+}
+
+log_start_process() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${AUDITLOGFILE}" ]
+  then
+    PROCESS=${PROCESS:-${1:-process}}
+    log "Starting $PROCESS (Pid $$)"
+  fi
+
+  return 0
+}
+
+log_end_process() \
+{
+  if [ "${LOGGING}" -a "${LOGGING}" != "0" -a "${AUDITLOGFILE}" ]
+  then
+    PROCESS=${PROCESS:-${1:-process}}
+    log "$PROCESS (Pid $$) Finished. Status $errno"
+  fi
+
+  return 0
+}
+matches_pattern() {
+    local entry="$1"
+    shift
+    for pattern in "$@"; do
+        if [[ "$entry" == $pattern ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+generate_json() {
+    local path="$1"
+    local indent="$2"
+    local output_file="$3"
+    local first="true"
+
+    echo "${indent}{" >> "$output_file"
+    echo "${indent}  \"type\": \"directory\"," >> "$output_file"
+    echo "${indent}  \"name\": \"$(basename "$path")\"," >> "$output_file"
+    echo "${indent}  \"contents\": [" >> "$output_file"
+
+    for entry in "$path"/*; do
+        if matches_pattern "$(basename "$entry")" "${exclude_patterns[@]}"; then
+            continue
+        fi
+
+        if [ -d "$entry" ]; then
+            if [ "$first" = "false" ]; then
+                echo "," >> "$output_file"
+            fi
+            first="false"
+            generate_json "$entry" "  $indent" "$output_file"
+        elif matches_pattern "$(basename "$entry")" "${include_patterns[@]}"; then
+            if [ "$first" = "false" ]; then
+                echo "," >> "$output_file"
+            fi
+            first="false"
+            echo -n "${indent}  {" >> "$output_file"
+            echo -n "\"type\": \"file\", \"name\": \"$(basename "$entry")\"}" >> "$output_file"
+        fi
+    done
+
+    echo >> "$output_file"
+    echo "${indent}  ]" >> "$output_file"
+    echo -n "${indent}}" >> "$output_file"
+}
+
+starttime=`date +"%Y %m %d %H:%M:%S"`
+echo "程序开始时间：$starttime"
+#shellpath=`dirname $0`
+shellpath=$HOME
+#cd "$shellpath"
+datadir1=$1
+datadir2="${datadir1##*/}"
+datadir="$shellpath/zplayerdatafile/$datadir2"
+PIDFILE=$datadir/.f_search.pid
+THISTIME=$datadir/thistime
+LASTTIME=$datadir/lasttime
+metadataphp=$datadir/metadata.php
+metadata1sql=$datadir/metadata1.sql
+f_searchfile=$datadir/f_search.txt
+gen_dir="/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos"
+output_file="/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree.json"
+gen_dir1="/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2"
+output_file1="/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree2.json"
+gen_dir2="/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos3"
+output_file2="/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree3.json"
+exclude_patterns=("*.sh" "*.txt" "*.jpg" "*.png" "*.wbep" "*.py" "*.temp*" "*.html" "*.part" "*.ytdl" "download.*")
+include_patterns=("*.mp4" "*.mov" "*.mp3" "*.divx" "*.mkv" "*.flv" "*.m4v" "*.m4a" "*.avi" "*.wav" "*.wmv" "*.rmvb" "*.webm" "*.cue" "*.ape" "*.flac")
+
+trap "rm $THISTIME $PIDFILE ${output_file}.tmp ${output_file1}.tmp ${f_searchfile} ${metadataphp} ${metadata1sql}; exit 1" 1 2 3 6 9 15
+
+if [ ! -d "$datadir" ]; then
+    mkdir -p "$datadir"
+fi
+check_pid $PIDFILE
+[[ -f "$THISTIME" ]] && rm "$THISTIME"
+touch "$THISTIME"
+
+IFS_old=$IFS
+IFS=$'\n'
+
+[[ -f "$metadataphp" ]] && rm $metadataphp
+[[ -f "$metadata1sql" ]] && rm $metadata1sql
+[[ -f "$f_searchfile" ]] && rm $f_searchfile
+if [ -n "$1" ]; then
+    test -f "$LASTTIME"
+    if [ $? -eq 0 ];then
+        filelist="`find $1 -type f -iname "*.*" -newer $LASTTIME ! -newer $THISTIME -follow -print|grep -E -I 'mp4$|mov$|mp3$|divx$|mkv$|flv$|m4v$|m4a$|flv$|avi$|wav$|wmv$|rmvb$|webm$|cue$|ape$|flac$'|grep -E -v 'mp4.sh|archive.txt|archive_ygt.txt|downloadcmd.sh|download.mp4|download.m4v|download.mov'|sort -n`"
+    else
+        filelist="`find $1 -type f -iname "*.*" -follow -print|grep -E -I 'mp4$|mov$|mp3$|divx$|mkv$|flv$|m4v$|m4a$|flv$|avi$|wav$|wmv$|rmvb$|webm$|cue$|ape$|flac$'|grep -E -v 'mp4.sh|archive.txt|archive_ygt.txt|downloadcmd.sh|download.mp4|download.m4v|download.mov'|sort -n`"
+    fi
+    if [ -n "$filelist" ] ; then
+        iCounter=0
+        zhbj=0
+        dirbak="$1/test"
+        baknamedir="$1/test"
+        for i in $filelist
+        do
+           filename=`basename "$i" `
+           extension="${i##*.}"
+           iCounter=`expr $iCounter + 1`
+           st=`dirname "$i"`
+           rm -rf $st/._*
+
+           ffmpeg -i "$i" 2> metadata.txt
+           cover_info=$(grep "attached pic" metadata.txt)
+           if [ -n "$cover_info" ]; then
+             #mapindex=$(echo "$cover_info" | cut -d '#' -f 2 | cut -d '[' -f 1)
+             track_index0=$(echo "$cover_info" | grep -o '[0-9]\+' |tail -n +1 | head -n 1)
+             track_index=$(echo "$cover_info" | grep -o '[0-9]\+' |tail -n +2 | head -n 1)
+             ffmpeg -i "$i" -y -map $track_index0:$track_index -c:v copy "$i.jpg" -loglevel quiet
+
+             if [ -f "$i.jpg" ]; then
+                 st3=`echo "$i.jpg" |perl -p -e 's/\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\//\//g'`
+             else
+                 st3=`echo "/images/app.jpg" |perl -p -e 's/\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\//\//g'`
+             fi
+
+             if [[ ! -f "$st/cover.jpg" && "$dirbak" != "$st" ]]; then
+                 ffmpeg -i "$i" -y -map 0:$track_index -c:v copy "$st/cover.jpg" -loglevel quiet
+                 dirbak="$st"
+                 echo "生成封面:$st/cover.jpg"
+             else
+                 echo "没有生成封面:$st/cover.jpg"
+             fi
+           else
+             ffmpeg -i "$i" -y -frames:v 1 "$i.jpg" -loglevel quiet
+             if [ -f "$i.jpg" ]; then
+                st3=`echo "$i.jpg" |perl -p -e 's/\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\//\//g'`
+             else
+                st3=`echo "/images/app.jpg" |perl -p -e 's/\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\//\//g'`
+             fi
+             if [[ ! -f "$st/cover.jpg" && "$dirbak" != "$st" ]]; then
+                ffmpeg -i "$i" -y -frames:v 1 "$st/cover.jpg" -loglevel quiet
+                dirbak="$st"
+                echo "生成封面:$st/cover.jpg"
+             else
+                echo "没有生成封面:$st/cover.jpg"
+             fi
+           fi
+           rm -f metadata.txt
+           #st1=`echo "$i" |perl -p -e 's/\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\//\//g'`
+           #st2=`dirname "$i"|perl -p -e 's/\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\/wwwvideos\/|\/Applications\/XAMPP\/xamppfiles\/htdocs\/tp\/public\/wwwvideos2\///g'`
+
+           #echo "|;$st1|;$st2|;$filename|;$st3|;|;|;|;|;|;|;|;|;">>$f_searchfile
+           echo "$iCounter-发现文件:$filename"
+        done
+        echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成磁盘目录和文件读取，下面将建表和导入数据......"
+    else
+        echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 未搜索到符合条件的记录"
+        rm -f $PIDFILE
+        rm -f $THISTIME
+        exit 1
+    fi
+else
+    echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 请输入目录名称"
+    rm -f $PIDFILE
+    rm -f $THISTIME
+    exit 1
+fi
+
+/Applications/XAMPP/bin/mysql -uuser -ppsswd --default-character-set=utf8mb4 <<EOF
+    use web;
+    CREATE TABLE IF NOT EXISTS f_search (
+  pid int(11) unsigned NOT NULL auto_increment,
+  furl varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL default '',
+  fdir varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL default '',
+  fname varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL default '',
+  img varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL default '',
+  PRIMARY KEY (pid),
+  UNIQUE KEY furl (furl) USING HASH,
+  KEY fdir (fdir)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+EOF
+
+echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成数据库建表，即将导入数据......"
+
+#z1 "${gen_dir}" "${output_file}.tmp"
+#if [[ -f "${output_file}.tmp" ]]; then
+#    rm -rf "$output_file"
+#    mv -f "${output_file}.tmp" "$output_file"
+#fi
+#echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir}目录文件读取，生成文件${output_file}"
+#
+#z1 "${gen_dir1}" "${output_file1}.tmp"
+#if [[ -f "${output_file1}.tmp" ]]; then
+#    rm -rf "$output_file1"
+#    mv -f "${output_file1}.tmp" "$output_file1"
+#fi
+#echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir1}目录文件读取，生成文件${output_file1}"
+#
+#z1 "${gen_dir2}" "${output_file2}.tmp"
+#if [[ -f "${output_file2}.tmp" ]]; then
+#    rm -rf "$output_file2"
+#    mv -f "${output_file2}.tmp" "$output_file2"
+#fi
+#echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir2}目录文件读取，生成文件${output_file2}"
+#
+#z2 "${gen_dir}" "${f_searchfile}"
+#echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir}目录入库"
+#
+#z2 "${gen_dir1}" "${f_searchfile}"
+#echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir1}目录入库"
+#
+#z2 "${gen_dir2}" "${f_searchfile}"
+#echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir2}目录入库"
+
+filelist1="`find /Applications/XAMPP/xamppfiles/htdocs/tp/public -type d -iname "wwwvideo*" -follow -print|sort -n`"
+f_searchfile1="/Applications/XAMPP/xamppfiles/htdocs/tp/public/f_search.txt"
+iCounter1=0
+for lines in $filelist1
+do
+	gen_dir=$lines
+	iCounter1=`expr $iCounter1 + 1`
+	output_file="/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree${iCounter1}.json"
+	z1 "${gen_dir}" "${output_file}.tmp"
+	if [[ -f "${output_file}.tmp" ]]; then
+	    rm -rf "$output_file"
+	    mv -f "${output_file}.tmp" "$output_file"
+	fi
+	echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir}目录文件读取，生成文件${output_file}"
+
+	z2 "${gen_dir}" "${f_searchfile1}"
+	echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成${gen_dir}目录入库"
+done
+
+mv -f "/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree1.json" "/Applications/XAMPP/xamppfiles/htdocs/tp/public/directory_tree.json"
+[[ -f "$f_searchfile1" ]] && rm $f_searchfile1
+
+echo "`date "+%Y年%m月%d日%H点%M分%S秒"` 完成初始数据导入，即将构建搜索索引，视媒体文件数量决定构建索引时长，该步骤将从大量媒体文件中读取元数据，时间有点长，请耐心等待......"
+
+#[[ -f "$LASTTIME" ]] && rm "$LASTTIME"
+mv -f $THISTIME $LASTTIME
+rm -f $PIDFILE
+[[ -f "$metadataphp" ]] && rm $metadataphp
+[[ -f "$metadata1sql" ]] && rm $metadata1sql
+[[ -f "$f_searchfile" ]] && rm $f_searchfile
+
+#将IFS变量还原为默认值
+IFS=$IFS_old
+
+endtime=`date +"%Y %m %d %H:%M:%S"`
+echo "程序结束时间：$endtime"
+
+exit 0
+
+

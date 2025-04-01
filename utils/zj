@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+import os
+import sys
+import re
+import fnmatch
+from opencc import OpenCC
+
+# 如果在 Windows 平台，设置控制台编码为 UTF-8
+if sys.platform == "win32":
+    os.system("chcp 65001")
+
+# 初始化转换器（繁体到简体）
+converter = OpenCC('t2s.json')
+
+# 文件类型过滤器
+#valid_extensions = ['.mp4', '.mp3', '.m4a', '.mov', '.jpg', '.png', '.m4a', '.m4a']  # 允许处理的文件类型
+#exclude_keywords = ['download', 'archive', 'index']  # 排除的关键字
+valid_extensions = [".mp4", ".mov", ".mp3", ".divx", ".mkv", ".flv", ".m4v", ".m4a", ".avi", ".wav", ".wmv", ".rmvb", ".webm", ".jpg", ".png", ".wbep", ".gif", ".cue", ".ape", ".flac"]
+#exclude_patterns = [".sh", ".txt", ".html", ".part", ".ytdl", ".py", "download.*", "*.temp*", "*.tmp*"]
+
+#exclude_patterns = ("*.sh", "*.txt", "*.jpg", "*.png", "*.html", "*.part", "*.ytdl", "*.py", "*.wbep", "download.*", "*.temp*", "*.tmp*")
+#include_patterns = ("*.mp4", "*.mov", "*.mp3", "*.divx", "*.mkv", "*.flv", "*.m4v", "*.m4a", "*.avi", "*.wav", "*.wmv", "*.rmvb", "*.webm")
+def repsub(text):
+    clean_text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9._\-/:]', '', text)
+    return clean_text
+
+def matches_patterns(file_name, patterns):
+    return any(fnmatch.fnmatch(file_name, pattern) for pattern in patterns)
+
+def convert_name(name):
+    """将名称从繁体转换为简体"""
+    return converter.convert(name)
+
+def get_unique_name(path):
+    """
+    获取一个唯一的文件名或目录名
+    如果 path 已存在，则在后面添加数字递增的后缀
+    """
+    base, ext = os.path.splitext(path)
+    counter = 2
+    while os.path.exists(path):
+        path = f"{base}{counter}{ext}"
+        counter += 1
+    return path
+
+def should_process(name):
+    """判断是否处理该文件"""
+    #if any(keyword in name.lower() for keyword in exclude_keywords):
+    #    return False
+    if os.path.isdir(name) or os.path.splitext(name)[1].lower() in valid_extensions:
+        return True
+    return False
+
+def should_process2(name):
+    """判断是否处理该目录"""
+    if any(keyword in name.lower() for keyword in exclude_keywords):
+        return False
+    return True
+
+def rename_files_and_dirs(base_dir):
+    """递归重命名目录和文件"""
+    for root, dirs, files in os.walk(base_dir, topdown=False):
+        # 处理文件
+        for file in files:
+            if not should_process(file):
+                continue  # 跳过不符合条件的文件
+
+            old_path = os.path.join(root, file)
+            new_name = repsub(convert_name(file))
+            new_path = os.path.join(root, new_name)
+            if old_path != new_path:
+                new_path = get_unique_name(new_path)
+                try:
+                    os.rename(old_path, new_path)
+                    print(f"文件重命名: {old_path} -> {new_path}")
+                except Exception as e:
+                    print(f"文件重命名失败: {old_path} -> {new_path}, 错误: {e}")
+
+        # 处理目录
+        for dir in dirs:
+            #if not should_process2(dir):
+            #    continue  # 跳过不符合条件的目录
+            old_path = os.path.join(root, dir)
+            new_name = repsub(convert_name(dir))
+            new_path = os.path.join(root, new_name)
+            if old_path != new_path:
+                new_path = get_unique_name(new_path)
+                try:
+                    os.rename(old_path, new_path)
+                    print(f"目录重命名: {old_path} -> {new_path}")
+                except Exception as e:
+                    print(f"目录重命名失败: {old_path} -> {new_path}, 错误: {e}")
+
+if __name__ == "__main__":
+    # 检查命令行参数
+    if len(sys.argv) >= 2:
+        base_directory = sys.argv[1]
+    else:
+        print("本脚本实现把繁体目录名和文件名改为简体")
+        print("提示：可以直接通过命令行参数指定目标目录（含空格时需用引号包裹）")
+        base_directory = input("请输入要处理的目录路径: ").strip()
+
+    if os.path.isdir(base_directory):
+        print(f"目录名: {base_directory}")
+        rename_files_and_dirs(base_directory)
+    else:
+        print("提供的路径不是有效的目录")
+## 示例运行
+#if __name__ == "__main__":
+#    base_directory = input("请输入要处理的目录路径: ").strip()
+#    if os.path.isdir(base_directory):
+#        rename_files_and_dirs(base_directory)
+#    else:
+#        print("提供的路径不是有效的目录")

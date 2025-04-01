@@ -1,0 +1,31 @@
+#!/bin/bash
+#set -x
+export LANG=C
+IFS_old=$IFS
+IFS=$'\n'
+shelldir=`pwd`
+
+if test $# -lt 1
+then
+	echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+	echo "::Usage : you must goto filedir                       ::"
+	echo "::Usage : zyf sec                                     ::"
+	echo "::Usage : zyf 15                                      ::"
+	echo "::::::::::::::::::::::::::::::::::::::::::::::::::::::::"
+   exit 1
+fi
+iCounter=0
+for line in `find "$shelldir" -name \* -type f -follow -print | grep -E -i "mkv|mp4$|m4v$|mov$|avi$"|sort -n`
+do
+ #if [[ ! -f "$line.jpg" || $2 == 1 ]]; then
+ #if [[ $2 == 1 ]]; then
+   #echo "$line"
+   #ffmpeg -hwaccel_output_format cuda -i "$line" -y -an -threads 4 -ss $1 -t 1 -s 1920x1080 -frames:v 1 "$line.jpg"
+   ffmpeg -i "$line" -y -an -threads 4 -ss $1 -t 1 -s 1920x1080 -frames:v 1 "$line.jpg" -loglevel quiet
+   #ffmpeg -hwaccel cuda -c:v h264_nvenc -i "$line" -y -an -threads 4 -ss $1 -t 1 -s 1920x1080 -frames:v 1 "$line.jpg"
+   echo "$line"
+ #fi
+ iCounter=`expr $iCounter + 1`
+ echo "$iCounter:`date "+%Y年%m月%d日%H点%M分%S秒"`-job finished..."
+done
+exit
