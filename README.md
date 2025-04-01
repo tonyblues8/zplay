@@ -44,7 +44,7 @@
 ### threading
 ### contextlib
 
-# <a href="https://github.com/tonyblues8/ZPlayerCut/releases">下载编译后的版本</a>
+# <a href="https://github.com/tonyblues8/ZPlayerCut/releases">下载编译好的版本</a>
 
 # 解决Mac安装软件提示`已损坏无法打开`,`请移到废纸篓`
 
