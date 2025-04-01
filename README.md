@@ -24,10 +24,27 @@
 
 # 相关依赖：
 
+## <a href="https://github.com/FFmpeg/FFmpeg">ffmpeg</a>
 
+## python3.10
+### os
+### sys
+### json
+### signal
+### atexit
+### subprocess
+### time
+### glob
+### re
+### numpy 
+### librosa
+### faiss
+### pydub
+### moviepy
+### threading
+### contextlib
 
-## <a href="https://github.com/tonyblues8/ZPlayerCut/releases">下载编译后的版本</a>
-
+# <a href="https://github.com/tonyblues8/ZPlayerCut/releases">下载编译后的版本</a>
 
 # 解决Mac安装软件提示`已损坏无法打开`,`请移到废纸篓`
 
