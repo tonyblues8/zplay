@@ -26,7 +26,7 @@
 
 ## <a href="https://github.com/FFmpeg/FFmpeg">ffmpeg</a>
 
-## python3.10
+## <a href="https://www.python.org/">python3.10</a>
 ### os
 ### sys
 ### json
