@@ -2,12 +2,20 @@
 影音简单加工工具
 
 # MacOS应用截图
+
 本人编译及运行环境：mac min M4 MacOS 15.3.2
+
 <div align="center">
+
+### 添加片头和字幕文件
 
 [![ZPlayercut](https://raw.githubusercontent.com/tonyblues8/ZPlayerCut/refs/heads/main/pic/jp.png)](#MacOS应用截图)
 
+### 删除片头片尾
+
 [![ZPlayercut](https://raw.githubusercontent.com/tonyblues8/ZPlayerCut/refs/heads/main/pic/jp1.png)](#MacOS应用截图)
+
+### 删除视频中广告片段（注意：请事先截取视频中广告片段的音频片段）
 
 [![ZPlayercut](https://raw.githubusercontent.com/tonyblues8/ZPlayerCut/refs/heads/main/pic/jp2.png)](#MacOS应用截图)
 
