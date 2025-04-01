@@ -15,7 +15,7 @@ from pydub import AudioSegment
 from moviepy import *
 import threading
 import contextlib
-from dejavu import Dejavu
+#from dejavu import Dejavu
 #ffmpeg -f concat -safe 0 -i file_list.txt -c copy 3.mp4 -y
 #ffmpeg -i /Users/tony/sampleaudio/sample_audio3_wav.wav -ar 44100 -ac 2 /Users/tony/sampleaudio/sample_audio3_aac.aac
 #from moviepy.video.io.concatenate_videoclips import concatenate_videoclips
@@ -43,9 +43,9 @@ THRESHOLD = 100        # 相似度阈值（欧氏距离）值设得太低可能�
 #config = {
 #        "database": {
 #            "host": "192.168.3.4",
-#            "user": "dejavu",
-#            "password": "xiongqian",
-#            "database": "dejavu"
+#            "user": "",
+#            "password": "",
+#            "database": ""
 #        },
 #        "database_type": "mysql"
 #}
