@@ -1,12 +1,15 @@
 #ifndef COMMAND_H
 #define COMMAND_H
-
 #include <wx/wx.h>
 #include <string>
 #include "CustomButton.h"
+#include "CustomGauge.h"
+
+#include "pic/bubj.h"
+#include "pic/bubj2.h"
 #include <wx/tglbtn.h>
 #include <wx/snglinst.h>
-#include <filesystem>
+#include <iostream>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -19,16 +22,19 @@ bool IsDarkModeEnabledcommand();  // 函数声明
 #ifdef __cplusplus
 }
 #endif
-namespace fs = std::filesystem;
+
+
 //extern bool isDarkMode;
 //extern wxBitmap bitmapbubj, bitmapbubj2, bitmapOn, bitmapOff;
 //extern wxColour backgroundColor, textColor, customColor, customColor2;
 
 class Command {
 public:
+     //wxBitmap bitmapbubj, bitmapbubj2, bitmapOn, bitmapOff;
+ //wxColour backgroundColor, textColor, customColor, customColor2;
     Command();  // 构造函数声明
     ~Command(); // 析构函数声明
-    //bool isDarkMode;
+    bool isDarkMode;
     ////以下调用方式
     ////Command cmd
     ////cmd.fun()
@@ -48,13 +54,13 @@ public:
     std::string getFileMD5(const std::string& filename);//std::string filepath = "/etc/the/ffsf.mp4";std::string md5 = getFileMD5(filepath);
     void CopyDirectoryRecursive(const wxString& sourceDir, const wxString& targetDir);
     bool stringToBool(const std::string& str);
-    std::string GetDirName(const std::string& path);
-    std::string getFileNameWithoutExtension(const std::string& filePath);
-    bool fileExists(const std::string& filename);
+    void DisableButton(wxBitmapToggleButton* button, const wxColour& bgColour, const wxColour& textColour);
+    void EnableButton(wxBitmapToggleButton* button, const wxColour& bgColour, const wxColour& textColour);
+    void IgnoreClick(wxMouseEvent& event);
 
     ////以下调用方式:Command::fun()
     static void SetColorsAndStylesRecursiveN(wxWindow* window, wxPanel* Getpanel);
-    static void SetColorsAndStylesRecursive(wxWindow* window, const wxColour& textColour, const wxColour& bgColour, const wxColour& customColor, const wxColour& customColor2, bool noBorder);
+    static void SetColorsAndStylesRecursive(wxWindow* window, wxColour& textColour, wxColour& bgColour, wxColour& customColor, wxColour& customColor2, bool noBorder);
     static void SetupEnvironment();
     static std::string NormalizePath(const std::string& path);
     static wxString ClearAllSpace(const wxString& str);
@@ -64,6 +70,7 @@ public:
     static int ExecCommand(const std::string& command, std::string* output);//if (Command::ExecCommand("command -v /usr/local/bin/python3 > /dev/null 2>&1") == 0)
     static bool CheckPip(const std::string& pythonPath);
     static bool CheckPythonVersion(const std::string& pythonPath);
+    static void CheckPythonInstallation(const std::string& pythonPath);
 
     static void InstallPythonPackage(const std::string& pythonPath, const std::string& package, const std::string& pipName);
 #ifdef _WIN32
@@ -73,5 +80,6 @@ public:
 
 private:
     wxSingleInstanceChecker* m_checker;
+    //bool isDarkMode;
 };
 #endif // COMMAND_H

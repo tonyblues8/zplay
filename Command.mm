@@ -1,6 +1,10 @@
 #include "Command.h"
-
+#include "AutoCloseDialog.h"
 #include <wx/wx.h>
+#include <wx/string.h>
+#include <wx/filesys.h>
+#include <string>
+
 #include <wx/dir.h>
 #include <algorithm>
 #include <wx/stdpaths.h>
@@ -23,7 +27,6 @@
 #endif
 
 #ifdef __APPLE__
-#include <iostream>
 #include <Cocoa/Cocoa.h>
 
 #include <objc/objc.h>
@@ -39,13 +42,17 @@
 #include "pic/imageon1.h"
 #include "pic/imageoff1.h"
 
+
+#include <chrono>
+#include <thread>
+
+
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <Cocoa/Cocoa.h>
 
 #include <objc/objc.h>
 #include <objc/objc-runtime.h>
-
 // 构造函数定义
 Command::Command() {
     // 在构造函数中初始化 wxSingleInstanceChecker 指针
@@ -87,12 +94,36 @@ bool Command::IsDarkMode() {
 
 // 颜色和样式设置
 void Command::SetColorsAndStylesRecursiveN(wxWindow* window, wxPanel* Getpanel) {
+	//wxMessageBox(isDarkMode ? "Dark Mode is enabled" : "Dark Mode is disabled", "提示", wxOK | wxICON_INFORMATION);
+    Command tcmd;
+    wxString homeDir = wxGetHomeDir();
+    wxString filename = wxString::Format(homeDir + "/zsprundir/dark_zplayer.txt");
+    filename = NormalizePath(filename.ToStdString());
+    if (wxFileExists(filename)) {
+        std::string loadedData = tcmd.loadFromFile(filename.ToStdString());
+        if (!loadedData.empty()) {
+            tcmd.isDarkMode =  tcmd.stringToBool(loadedData);
+            //wxMessageBox(loadedData, "提示", wxOK | wxICON_INFORMATION);
+        }
+    } else {
+       tcmd.isDarkMode = IsDarkMode();
+    }
+
     //bool isDarkMode = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW) == *wxBLACK;
-    bool isDarkMode = Command::IsDarkMode();
-    wxColour backgroundColor = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
-    wxColour textColor = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
-    wxColour customColor2 = isDarkMode ? wxColour(168, 168, 168) : wxColour(242, 242, 242);
+    //bool isDarkMode = Command::IsDarkMode();
+    ////wxColour backgroundColor = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+    //wxColour backgroundColor = isDarkMode ? wxColour(36, 36, 36) : wxColour(242, 242, 242);
+    ////wxColour backgroundColor = isDarkMode ? wxColour(168, 168, 168) : wxColour(242, 242, 242);
+    ////wxColour textColor = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
+    //wxColour textColor = isDarkMode ? wxColour(242, 242, 242) : wxColour(36, 36, 36);
+    //wxColour customColor2 = isDarkMode ? wxColour(168, 168, 168) : wxColour(242, 242, 242);
+
+    wxColour backgroundColor = tcmd.isDarkMode ? wxColour(36, 36, 36) : wxColour(242, 242, 242);
+    wxColour textColour = tcmd.isDarkMode ? wxColour(242, 242, 242) : wxColour(36, 36, 36);
+    wxColour customColor = tcmd.isDarkMode ? wxColour(128, 128, 128) : wxColour(230, 230, 230);
+    wxColour customColor2 = tcmd.isDarkMode ? wxColour(168, 168, 168) : wxColour(242, 242, 242);
     wxBitmap bitmapOn, bitmapOff, bitmapbubj, bitmapbubj2;
+    Getpanel->SetBackgroundColour(backgroundColor);
 
     wxMemoryInputStream memStreambubj(bubj_png, bubj_png_len);
     wxImage imagebubj(memStreambubj, wxBITMAP_TYPE_PNG);
@@ -108,7 +139,7 @@ void Command::SetColorsAndStylesRecursiveN(wxWindow* window, wxPanel* Getpanel) 
     }
 
 
-    if (isDarkMode) {
+    if (tcmd.isDarkMode) {
         wxMemoryInputStream memStreamOn(imageon1_png, imageon1_png_len);
         wxMemoryInputStream memStreamOff(imageoff1_png, imageoff1_png_len);
         wxImage imageOn(memStreamOn, wxBITMAP_TYPE_PNG);
@@ -128,72 +159,26 @@ void Command::SetColorsAndStylesRecursiveN(wxWindow* window, wxPanel* Getpanel) 
         }
     }
 
-    // 处理 CustomButton
-    if (auto* clickedButton = dynamic_cast<CustomButton*>(window)) {
-        clickedButton->SetBackgroundColour(backgroundColor);
-        clickedButton->SetForegroundColour(textColor);
-        clickedButton->SetBitmap(isDarkMode ? bitmapbubj2 : bitmapbubj);
-    }
-
+    //// 处理 CustomButton
+    //if (auto* clickedButton = dynamic_cast<CustomButton*>(window)) {
+    //    clickedButton->SetBackgroundColour(backgroundColor);
+    //    clickedButton->SetForegroundColour(textColor);
+    //    clickedButton->SetBitmap(isDarkMode ? bitmapbubj2 : bitmapbubj);
+    //}
+    //
+    //// 处理 wxBitmapToggleButton
+    //if (auto* clickedButton = dynamic_cast<wxBitmapToggleButton*>(window)) {
+    //    clickedButton->SetBitmapLabel(clickedButton->GetValue() ? bitmapOn : bitmapOff);
+    //}
     // 处理 wxBitmapToggleButton
     if (auto* clickedButton = dynamic_cast<wxBitmapToggleButton*>(window)) {
         clickedButton->SetBitmapLabel(clickedButton->GetValue() ? bitmapOn : bitmapOff);
     }
 
-    window->Layout();
-    window->Refresh();
-    window->Update();
-    Getpanel->Layout();
-    Getpanel->Refresh();
-    Getpanel->Update();
 
-    for (wxWindow* child : window->GetChildren()) {
-        SetColorsAndStylesRecursiveN(child, Getpanel);
-    }
-}
-
-void Command::SetColorsAndStylesRecursive(wxWindow* window, const wxColour& textColour, const wxColour& bgColour, const wxColour& customColor, const wxColour& customColor2, bool noBorder)
-{
-    // 设置背景色和前景色
-    bool isDarkMode = Command::IsDarkMode();
-    window->SetBackgroundColour(bgColour);
+    bool noBorder = true;
+    window->SetBackgroundColour(backgroundColor);
     window->SetForegroundColour(textColour);
-    wxBitmap bitmapOn, bitmapOff, bitmapbubj, bitmapbubj2;
-
-    wxMemoryInputStream memStreambubj(bubj_png, bubj_png_len);
-    wxImage imagebubj(memStreambubj, wxBITMAP_TYPE_PNG);
-    if (imagebubj.IsOk()) {
-        wxImage scaledImagebubj = imagebubj.Rescale(120, 30, wxIMAGE_QUALITY_HIGH);
-        bitmapbubj = wxBitmap(scaledImagebubj);
-    }
-    wxMemoryInputStream memStreambubj2(bubj2_png, bubj2_png_len);
-    wxImage imagebubj2(memStreambubj2, wxBITMAP_TYPE_PNG);
-    if (imagebubj2.IsOk()) {
-        wxImage scaledImagebubj2 = imagebubj2.Rescale(120, 30, wxIMAGE_QUALITY_HIGH);
-        bitmapbubj2 = wxBitmap(scaledImagebubj2);
-    }
-
-
-    if (isDarkMode) {
-        wxMemoryInputStream memStreamOn(imageon1_png, imageon1_png_len);
-        wxMemoryInputStream memStreamOff(imageoff1_png, imageoff1_png_len);
-        wxImage imageOn(memStreamOn, wxBITMAP_TYPE_PNG);
-        wxImage imageOff(memStreamOff, wxBITMAP_TYPE_PNG);
-        if (imageOn.IsOk() && imageOff.IsOk()) {
-            bitmapOn = wxBitmap(imageOn.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
-            bitmapOff = wxBitmap(imageOff.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
-        }
-    } else {
-        wxMemoryInputStream memStreamOn(imageon_png, imageon_png_len);
-        wxMemoryInputStream memStreamOff(imageoff_png, imageoff_png_len);
-        wxImage imageOn(memStreamOn, wxBITMAP_TYPE_PNG);
-        wxImage imageOff(memStreamOff, wxBITMAP_TYPE_PNG);
-        if (imageOn.IsOk() && imageOff.IsOk()) {
-            bitmapOn = wxBitmap(imageOn.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
-            bitmapOff = wxBitmap(imageOff.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
-        }
-    }
-
 
     // 特殊处理按钮的背景色
     if (wxButton* button = dynamic_cast<wxButton*>(window))
@@ -206,25 +191,25 @@ void Command::SetColorsAndStylesRecursive(wxWindow* window, const wxColour& text
         }
     }
 
-if (CustomButton* button = dynamic_cast<CustomButton*>(window)) {
-    // 调用自定义方法设置按钮背景色和文字颜色
-    //button->SetButtonColors(customColor, textColour);
-    isDarkMode = Command::IsDarkMode();
-    button->SetBackgroundColour(customColor);
-    button->SetForegroundColour(textColour);
-    if (isDarkMode) {
-        button->SetBitmap(bitmapbubj2);
-    }else{
-        button->SetBitmap(bitmapbubj);
-    }
-    //button->SetBackgroundColour(customColor);
-    //button->SetBackgroundColour(textColour);
+    if (CustomButton* button = dynamic_cast<CustomButton*>(window)) {
+        // 调用自定义方法设置按钮背景色和文字颜色
+        //button->SetButtonColors(customColor, textColour);
+        //isDarkMode = Command::IsDarkMode();
+        button->SetBackgroundColour(customColor);
+        button->SetForegroundColour(wxColour(36, 36, 36));
+        //if (tcmd.isDarkMode) {
+        //    button->SetBitmap(bitmapbubj);
+        //}else{
+        //    button->SetBitmap(bitmapbubj2);
+        //}
+        //button->SetBackgroundColour(customColor);
+        //button->SetBackgroundColour(textColour);
 
-    // 根据 noBorder 值决定是否移除按钮边框
-    //if (noBorder) {
-    //    button->RemoveButtonBorder(true); // 去掉边框
-    //}
-}
+        // 根据 noBorder 值决定是否移除按钮边框
+        //if (noBorder) {
+        //    button->RemoveButtonBorder(true); // 去掉边框
+        //}
+    }
 
     // 特殊处理输入框的背景色
     if (wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>(window))
@@ -246,6 +231,173 @@ if (CustomButton* button = dynamic_cast<CustomButton*>(window)) {
             comboBox->SetWindowStyle(comboBox->GetWindowStyle() | wxBORDER_NONE); // 去掉边框
             comboBox->Refresh(); // 刷新下拉列表以应用新样式
         }
+    }
+
+    // 特殊处理进度条的背景色和前景色
+    if (CustomGauge* gauge = dynamic_cast<CustomGauge*>(window))
+    {
+        //gauge->SetBackgroundColour(backgroundColor);
+        //gauge->SetForegroundColour(textColour); // 设置进度条的颜色
+        gauge->SetBackgroundAndForeground(backgroundColor,textColour);
+
+    }
+
+    // 特殊处理进度条的背景色和前景色
+    if (wxGauge* gauge = dynamic_cast<wxGauge*>(window))
+    {
+        gauge->SetBackgroundColour(backgroundColor);
+        gauge->SetForegroundColour(textColour); // 设置进度条的颜色
+        if (noBorder) {
+            gauge->SetWindowStyle(gauge->GetWindowStyle() | wxBORDER_NONE); // 去掉边框
+            gauge->Refresh(); // 刷新进度条以应用新样式
+        }
+    }
+
+    // 特殊处理进度条的背景色和前景色
+    if (wxChoice* choice = dynamic_cast<wxChoice*>(window))
+    {
+        choice->SetBackgroundColour(backgroundColor);
+        choice->SetForegroundColour(textColour); // 设置进度条的颜色
+        if (noBorder) {
+            choice->SetWindowStyle(choice->GetWindowStyle() | wxBORDER_NONE); // 去掉边框
+            choice->Refresh(); // 刷新进度条以应用新样式
+        }
+    }
+
+
+    // 递归设置每个子控件的颜色和样式
+    for (wxWindow* child : window->GetChildren())
+    {
+        SetColorsAndStylesRecursiveN(child, Getpanel);
+    }
+    window->Layout();
+    window->Refresh();
+    window->Update();
+    Getpanel->Layout();
+    Getpanel->Refresh();
+    Getpanel->Update();
+
+    //for (wxWindow* child : window->GetChildren()) {
+    //    SetColorsAndStylesRecursiveN(child, Getpanel);
+    //}
+}
+
+void Command::SetColorsAndStylesRecursive(wxWindow* window, wxColour& textColour, wxColour& bgColour, wxColour& customColor, wxColour& customColor2, bool noBorder)
+{
+    Command tcmd;
+    wxString homeDir = wxGetHomeDir();
+    wxString filename = wxString::Format(homeDir + "/zsprundir/dark_zplayer.txt");
+    filename = NormalizePath(filename.ToStdString());
+    if (wxFileExists(filename)) {
+        std::string loadedData = tcmd.loadFromFile(filename.ToStdString());
+        if (!loadedData.empty()) {
+            tcmd.isDarkMode =  tcmd.stringToBool(loadedData);
+            //wxMessageBox(loadedData, "提示", wxOK | wxICON_INFORMATION);
+        }
+    } else {
+       tcmd.isDarkMode = IsDarkMode();
+    }
+    // 设置背景色和前景色
+    //bool isDarkMode = Command::IsDarkMode();
+    //bgColour = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+    //bgColour = isDarkMode ? wxColour(168, 168, 168) : wxColour(242, 242, 242);
+    //textColour = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
+    //customColor2 = isDarkMode ? wxColour(168, 168, 168) : wxColour(242, 242, 242);
+    wxBitmap bitmapOn, bitmapOff, bitmapbubj, bitmapbubj2;
+
+    wxMemoryInputStream memStreambubj(bubj_png, bubj_png_len);
+    wxImage imagebubj(memStreambubj, wxBITMAP_TYPE_PNG);
+    if (imagebubj.IsOk()) {
+        wxImage scaledImagebubj = imagebubj.Rescale(120, 30, wxIMAGE_QUALITY_HIGH);
+        bitmapbubj = wxBitmap(scaledImagebubj);
+    }
+    wxMemoryInputStream memStreambubj2(bubj2_png, bubj2_png_len);
+    wxImage imagebubj2(memStreambubj2, wxBITMAP_TYPE_PNG);
+    if (imagebubj2.IsOk()) {
+        wxImage scaledImagebubj2 = imagebubj2.Rescale(120, 30, wxIMAGE_QUALITY_HIGH);
+        bitmapbubj2 = wxBitmap(scaledImagebubj2);
+    }
+
+
+    if (tcmd.isDarkMode) {
+        wxMemoryInputStream memStreamOn(imageon1_png, imageon1_png_len);
+        wxMemoryInputStream memStreamOff(imageoff1_png, imageoff1_png_len);
+        wxImage imageOn(memStreamOn, wxBITMAP_TYPE_PNG);
+        wxImage imageOff(memStreamOff, wxBITMAP_TYPE_PNG);
+        if (imageOn.IsOk() && imageOff.IsOk()) {
+            bitmapOn = wxBitmap(imageOn.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
+            bitmapOff = wxBitmap(imageOff.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
+        }
+    } else {
+        wxMemoryInputStream memStreamOn(imageon_png, imageon_png_len);
+        wxMemoryInputStream memStreamOff(imageoff_png, imageoff_png_len);
+        wxImage imageOn(memStreamOn, wxBITMAP_TYPE_PNG);
+        wxImage imageOff(memStreamOff, wxBITMAP_TYPE_PNG);
+        if (imageOn.IsOk() && imageOff.IsOk()) {
+            bitmapOn = wxBitmap(imageOn.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
+            bitmapOff = wxBitmap(imageOff.Rescale(30, 30, wxIMAGE_QUALITY_HIGH));
+        }
+    }
+    window->SetBackgroundColour(bgColour);
+    window->SetForegroundColour(textColour);
+
+    // 特殊处理按钮的背景色
+    if (wxButton* button = dynamic_cast<wxButton*>(window))
+    {
+        button->SetBackgroundColour(customColor);
+        button->SetForegroundColour(textColour);
+        if (noBorder) {
+           button->SetWindowStyle(button->GetWindowStyle() | wxBORDER_NONE); // 去掉边框
+           button->Refresh(); // 刷新按钮以应用新样式
+        }
+    }
+
+    if (CustomButton* button = dynamic_cast<CustomButton*>(window)) {
+        // 调用自定义方法设置按钮背景色和文字颜色
+        //button->SetButtonColors(customColor, textColour);
+        //isDarkMode = Command::IsDarkMode();
+        button->SetBackgroundColour(customColor);
+        button->SetForegroundColour(wxColour(36, 36, 36));
+        if (tcmd.isDarkMode) {
+            button->SetBitmap(bitmapbubj);
+        }else{
+            button->SetBitmap(bitmapbubj2);
+        }
+        //button->SetBackgroundColour(customColor);
+        //button->SetBackgroundColour(textColour);
+
+        // 根据 noBorder 值决定是否移除按钮边框
+        //if (noBorder) {
+        //    button->RemoveButtonBorder(true); // 去掉边框
+        //}
+    }
+
+    // 特殊处理输入框的背景色
+    if (wxTextCtrl* textCtrl = dynamic_cast<wxTextCtrl*>(window))
+    {
+        textCtrl->SetBackgroundColour(customColor2);
+        textCtrl->SetForegroundColour(textColour);
+        if (noBorder) {
+            textCtrl->SetWindowStyle(textCtrl->GetWindowStyle() | wxBORDER_NONE); // 去掉边框
+            textCtrl->Refresh(); // 刷新输入框以应用新样式
+        }
+    }
+
+    // 特殊处理下拉列表的背景色
+    if (wxComboBox* comboBox = dynamic_cast<wxComboBox*>(window))
+    {
+        comboBox->SetBackgroundColour(customColor2);
+        comboBox->SetForegroundColour(textColour);
+        if (noBorder) {
+            comboBox->SetWindowStyle(comboBox->GetWindowStyle() | wxBORDER_NONE); // 去掉边框
+            comboBox->Refresh(); // 刷新下拉列表以应用新样式
+        }
+    }
+
+    // 特殊处理进度条的背景色和前景色
+    if (CustomGauge* gauge = dynamic_cast<CustomGauge*>(window))
+    {
+        gauge->SetBackgroundAndForeground(bgColour,textColour);
     }
 
     // 特殊处理进度条的背景色和前景色
@@ -373,6 +525,7 @@ bool Command::CheckPythonVersion(const std::string& pythonPath){
 }
 void Command::InstallPythonPackage(const std::string& pythonPath, const std::string& package, const std::string& pipName = ""){
     std::string pkgName = pipName.empty() ? package : pipName;
+    wxInitAllImageHandlers();
     // 检查包是否已安装
     std::string checkCommand = pythonPath + " -c 'import " + package + "' > /dev/null 2>&1";
     if (Command::ExecCommand(checkCommand) == 0) {
@@ -386,22 +539,100 @@ void Command::InstallPythonPackage(const std::string& pythonPath, const std::str
     std::cout << "Installing " << pkgName << "..." << std::endl;
     if (Command::ExecCommand(installCommand) != 0) {
         //#ifdef DEBUG
+        wxString message = wxString::Format("Failed to install:%s",pkgName);
+        wxLogMessage(message);
         throw std::runtime_error("Failed to install " + pkgName);
         //#endif
     }
     #ifdef DEBUG
     std::cout << "Successfully installed " << pkgName << "." << std::endl;
     #endif
+    wxString message = wxString::Format("Successfully installed:%s",pkgName);
+    AutoCloseDialog* dlg = new AutoCloseDialog(NULL, message, 3000);
+    dlg->ShowModal();
 }
 
+void Command::CheckPythonInstallation(const std::string& pythonPath)
+{
+    // 检查 python3 是否安装
+    wxInitAllImageHandlers();
+    std::ostringstream command;
+    command << "command -v " << pythonPath << " > /dev/null 2>&1";
+    if (system(command.str().c_str()) == 0)
+    {
+        // Python3 已安装，检查其功能
+        command.str("");  // 清空之前的命令
+        command << pythonPath << " -c \"print('ye')\"";
+        if (system(command.str().c_str()) == 0 && Command::CheckPythonVersion(pythonPath))
+        {
+            std::cout << pythonPath << " found!" << std::endl;
+        }
+        else
+        {
+            std::cout << pythonPath << " found but non-functional." << std::endl;
+            // 弹出对话框，提示用户安装必要工具
+            wxMessageDialog msg(NULL, "If you received a popup asking to install some tools, please accept.", "Install Tools", wxOK);
+            if (msg.ShowModal() == wxID_OK)
+            {
+                std::cout << "User needs to install additional tools." << std::endl;
+                // 自动安装缺少的工具（例如，xcode-select 在 macOS 上的安装）
+                if (system("xcode-select --install") != 0)
+                {
+                    std::cout << "Failed to trigger tool installation." << std::endl;
+                    wxLogMessage("Failed to trigger tool installation.");
+                }
+                else
+                {
+                    std::cout << "Installation command triggered successfully." << std::endl;
+                }
+            }
+        }
+    }
+    else
+    {
+        std::cout << "Installing python3..." << std::endl;
+        AutoCloseDialog* dlg = new AutoCloseDialog(NULL, wxString::FromUTF8("python3 not found or < 3.1.0, now Installing python3..."), 5000);
+        dlg->ShowModal();
+        // 如果 brew 不存在，先安装 Homebrew
+        if (system("command -v brew > /dev/null 2>&1") != 0)
+        {
+            system("/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)\"");
+        }
+        system("brew install python");
+    }
 
+    // 检查 pip 是否可用
+    command.str("");  // 清空之前的命令
+    command << pythonPath << " -m pip --version > /dev/null 2>&1";
+    if (system(command.str().c_str()) != 0)
+    {
+        std::cout << "pip not found. Installing pip..." << std::endl;
+        AutoCloseDialog* dlg = new AutoCloseDialog(NULL, wxString::FromUTF8("pip not found. Installing pip..."), 5000);
+        dlg->ShowModal();
+        command.str("");  // 清空之前的命令
+        command << pythonPath << " -m ensurepip --upgrade";
+        if (system(command.str().c_str()) != 0)
+        {
+            std::cout << "Failed to install pip." << std::endl;
+            wxLogMessage("Failed to install pip.");
+        }
+        else
+        {
+            std::cout << "pip installed successfully." << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "pip found." << std::endl;
+    }
+}
 
 //以下调用方式
 //Command cmd
 //cmd.fun()
 bool Command::CheckRun(wxFrame* m_frame){
 #ifdef _WIN32
-    m_checker = new wxSingleInstanceChecker(wxT("zdelv_unique_instance_checker"));
+    m_checker = new wxSingleInstanceChecker(wxT("ytui_unique_instance_checker"));
 
     if (m_checker->IsAnotherRunning())
     {
@@ -417,10 +648,10 @@ bool Command::CheckRun(wxFrame* m_frame){
             SetForegroundWindow(hwnd);
             ShowWindow(hwnd, SW_RESTORE);
         }
-        return false;
+        return true;
     }
 #else
-    m_checker = new wxSingleInstanceChecker(wxT("zdelv_unique_instance_checker"));
+    m_checker = new wxSingleInstanceChecker(wxT("ytui_unique_instance_checker"));
     if (m_checker->IsAnotherRunning())
     {
         bool isShown = m_frame->IsShown();
@@ -462,7 +693,7 @@ BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
     std::string title(windowText);
     delete[] windowText;
 
-    if (title.find("熊猫下载") != std::string::npos) {
+    if (title.find("熊猫") != std::string::npos) {
         // 找到匹配的窗口
         *(HWND*)lParam = hwnd;
         return FALSE;  // 停止枚举
@@ -707,19 +938,32 @@ bool Command::stringToBool(const std::string& str) {
     throw std::invalid_argument("Invalid string for conversion to bool");
     //#endif
 }
-std::string Command::GetDirName(const std::string& path) {
-    size_t pos = path.find_last_of("/\\");
-    if (pos == std::string::npos) {
-        return ".";
-    }
-    return path.substr(0, pos);
+
+void Command::DisableButton(wxBitmapToggleButton* button, const wxColour& bgColour, const wxColour& textColour)
+{
+    //button->SetBackgroundColour(bgColour);
+    //button->SetForegroundColour(textColour);
+    //button->Refresh(); // 刷新显示颜色变化
+
+    // 绑定事件处理函数
+    //choice->Bind(wxEVT_LEFT_DOWN, &IgnoreClick, choice->GetId());
+    // 绑定事件处理函数
+    button->Bind(wxEVT_LEFT_DOWN, &Command::IgnoreClick, this);
+    button->Bind(wxEVT_LEFT_DCLICK, &Command::IgnoreClick, this);
 }
 
-std::string Command::getFileNameWithoutExtension(const std::string& filePath) {
-    fs::path path(filePath);
-    return path.stem().string();
+// 启用 wxChoice 组件的点击事件
+void Command::EnableButton(wxBitmapToggleButton* button, const wxColour& bgColour, const wxColour& textColour)
+{
+    //button->SetBackgroundColour(bgColour);
+    //button->SetForegroundColour(textColour);
+    //button->Refresh(); // 刷新显示颜色变化
+
+    // 取消事件绑定
+    button->Unbind(wxEVT_LEFT_DOWN, &Command::IgnoreClick, this);
+    button->Unbind(wxEVT_LEFT_DCLICK, &Command::IgnoreClick, this);
 }
-bool Command::fileExists(const std::string& filename) {
-    std::ifstream file(filename);
-    return file.good();
+void Command::IgnoreClick(wxMouseEvent& event) {
+    // 处理事件的逻辑，例如忽略点击事件
+    event.Skip(false);  // 忽略事件处理
 }

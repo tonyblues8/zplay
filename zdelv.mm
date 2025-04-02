@@ -27,18 +27,19 @@ bool MyApp::OnInit()
     const std::string RESET = "\033[0m";
     const std::string pythonPath = "/usr/local/bin/python3"; // Homebrew Python 路径
     Command::SetupEnvironment();
+    Command::CheckPythonInstallation(pythonPath);
 
     // 检查 Python 和 pip
-    std::string output;
-    if (Command::ExecCommand("command -v /usr/local/bin/python3 > /dev/null 2>&1", &output) == 0 &&
-        Command::CheckPip(pythonPath) &&
-        Command::CheckPythonVersion(pythonPath)) {
-        std::cout << CYAN << "Python 3.10 found!" << RESET << std::endl;
-    } else {
-        std::cerr << CYAN << "Python 3.10 or pip not found! Please install manually." << RESET << std::endl;
-        wxMessageBox("Python 3.10 or pip not found! Please install manually.", "提示", wxOK | wxICON_INFORMATION);
-        return 1;
-    }
+    //std::string output;
+    //if (Command::ExecCommand("command -v /usr/local/bin/python3 > /dev/null 2>&1", &output) == 0 &&
+    //    Command::CheckPip(pythonPath) &&
+    //    Command::CheckPythonVersion(pythonPath)) {
+    //    std::cout << CYAN << "Python 3.10 found!" << RESET << std::endl;
+    //} else {
+    //    std::cerr << CYAN << "Python 3.10 or pip not found! Please install manually." << RESET << std::endl;
+    //    wxMessageBox("Python 3.10 or pip not found! Please install manually.", "提示", wxOK | wxICON_INFORMATION);
+    //    return 1;
+    //}
 
     // 检查并安装所需的 Python 包
     std::vector<std::pair<std::string, std::string>> packages = {

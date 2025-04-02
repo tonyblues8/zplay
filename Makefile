@@ -52,7 +52,7 @@ LIBS += /opt/homebrew/opt/xz/lib/liblzma.a \
 #SRC = CustomButton.cpp ImageButton.cpp pic/imageon.cpp pic/imageoff.cpp pic/imageon1.cpp pic/imageoff1.cpp pic/yybj.cpp pic/yybj2.cpp pic/bubj.cpp pic/bubj2.cpp zdelv.cpp
 # 源文件和目标文件
 SRC_CPP = CustomButton.cpp ImageButton.cpp MyFrame.cpp MyFrame2.cpp \
-          MyProcess.cpp MyTaskBarIcon.cpp AutoCloseDialog.cpp ThemeListener.cpp \
+          MyProcess.cpp MyTaskBarIcon.cpp AutoCloseDialog.cpp ThemeListener.cpp CustomGauge.cpp \
           pic/imageon.cpp pic/imageoff.cpp \
           pic/imageon1.cpp pic/imageoff1.cpp \
           pic/yybj.cpp pic/yybj2.cpp \

@@ -168,6 +168,34 @@ generate_json() {
     echo -n "${indent}}" >> "$output_file"
 }
 
+CYAN="$(tput bold; tput setaf 6)"
+RESET="$(tput sgr0)"
+
+# clear
+
+if command -v python3 > /dev/null 2>&1; then
+	if [ $(python3 -c "print('ye')") == "ye" ]; then
+		# clear
+		echo "${CYAN}python3 found!${RESET}"
+	else
+		# clear
+		echo "python3 found but non-functional" # probably xcode-select stub on Catalina+
+		echo "${CYAN}If you received a popup asking to install some tools, please accept.${RESET}"
+		read -n1 -r -p "Press [SPACE] when installation is complete, or any other key to abort." key
+		echo ""
+		if [ "$key" != '' ]; then
+			exit 1
+		fi
+	fi
+else
+	echo "${CYAN}installing python3...${RESET}"
+	if ! command -v brew > /dev/null 2>&1; then
+		echo | /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+	fi
+	brew install python
+fi
+
+
 starttime=`date +"%Y %m %d %H:%M:%S"`
 echo "程序开始时间：$starttime"
 #shellpath=`dirname $0`
