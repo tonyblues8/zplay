@@ -18,6 +18,9 @@ else:
     path = sys.argv[1]
     outputfile = sys.argv[2]
 
+dbhost=''
+dbuser=''
+dbpasswd=''
 #path = '/Applications/XAMPP/xamppfiles/htdocs/tp/public/wwwvideos2'
 exclude_patterns = ("*.sh", "*.txt", "*.jpg", "*.png", "*.wbep", "download.*")
 include_patterns = ("*.mp4", "*.mov", "*.mp3", "*.divx", "*.mkv", "*.flv", "*.m4v", "*.m4a", "*.avi", "*.wav", "*.wmv", "*.rmvb", "*.webm", "*.cue", "*.ape", "*.flac")
@@ -137,9 +140,9 @@ write_csv(path, outputfile, include_patterns, exclude_patterns)
 #  mysqlimport
 command = [
     '/Applications/XAMPP/bin/mysqlimport',
-    '-h', 'localhost',
-    '-u', '',
-    '-p' + '',
+    '-h', dbhost,
+    '-u', dbuser,
+    '-p' + dbpasswd,
     '--default-character-set=utf8',
     '--fields-terminated-by=|;',
     '--fields-enclosed-by="',
@@ -150,7 +153,6 @@ command = [
     outputfile  # CSV
 ]
 result = subprocess.call(command)
-#result = subprocess.call(`/Applications/XAMPP/bin/mysqlimport -h localhost -uroot -pxiongqian --default-character-set=utf8 --fields-terminated-by="," --enclosed-by='"' --lines-terminated-by="\n" --local web %s`%outputfile, stdin=None, shell=True)
 #
 if result == 0:
     print("导入数据成功过： %s."%outputfile)
@@ -159,9 +161,9 @@ else:
 
 command2 = [
     '/Applications/XAMPP/bin/mysql',
-    '-h', 'localhost',
-    '-u', '',
-    '-p' + '',  # 注意这里是密码
+    '-h', dbhost,
+    '-u', dbuser,
+    '-p' + dbpasswd,  # 注意这里是密码
     '-e', 'use web;CALL `buildround`()'  # 使用 -e 来执行 SQL 语句
 ]
 
