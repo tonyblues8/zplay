@@ -160,8 +160,8 @@ else:
 command2 = [
     '/Applications/XAMPP/bin/mysql',
     '-h', 'localhost',
-    '-u', 'root',
-    '-p' + 'xiongqian',  # 注意这里是密码
+    '-u', '',
+    '-p' + '',  # 注意这里是密码
     '-e', 'use web;CALL `buildround`()'  # 使用 -e 来执行 SQL 语句
 ]
 
