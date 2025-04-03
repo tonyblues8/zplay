@@ -198,6 +198,8 @@ fi
 
 starttime=`date +"%Y %m %d %H:%M:%S"`
 echo "程序开始时间：$starttime"
+dbuser=user
+dbpasswd=passwd
 #shellpath=`dirname $0`
 shellpath=$HOME
 #cd "$shellpath"
@@ -311,7 +313,7 @@ else
     exit 1
 fi
 
-/Applications/XAMPP/bin/mysql -uuser -ppsswd --default-character-set=utf8mb4 <<EOF
+/Applications/XAMPP/bin/mysql -u$dbuser -p$dbpasswd --default-character-set=utf8mb4 <<EOF
     use web;
     CREATE TABLE IF NOT EXISTS f_search (
   pid int(11) unsigned NOT NULL auto_increment,
