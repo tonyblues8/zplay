@@ -195,6 +195,15 @@ else
 	brew install python
 fi
 
+if command -v python3 -m pip --version > /dev/null 2>&1; then
+    echo "${CYAN}pip found!${RESET}"
+else
+    echo "${CYAN}install pip!${RESET}"
+    python3 -m ensurepip --upgrade
+fi
+python3 -c "import fnmatch" || python3 -m pip install --user fnmatch
+python3 -c "import csv" || python3 -m pip install --user csv
+python3 -c "import subprocess" || python3 -m pip install --user subprocess
 
 starttime=`date +"%Y %m %d %H:%M:%S"`
 echo "程序开始时间：$starttime"
