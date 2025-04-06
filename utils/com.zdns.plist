@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.zdns</string>
+
+    <!-- 关键配置 -->
+    <key>PIDFile</key>
+    <string>/usr/local/var/run/zdns.pid</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- 替换为脚本绝对路径 -->
+        <string>/usr/local/bin/zdns</string>
+    </array>
+
+    <!-- 合并后的 KeepAlive 配置 -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <!-- 日志文件路径 -->
+    <string>/dev/null</string>
+
+    <key>StandardErrorPath</key>
+    <!-- 错误日志路径 -->
+    <string>/dev/null</string>
+
+    <!-- 添加用户权限声明 -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- 进程工作目录 -->
+    <key>WorkingDirectory</key>
+    <string>/usr/local/var</string>
+</dict>
+</plist>
+

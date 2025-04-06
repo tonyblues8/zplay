@@ -1,4 +1,17 @@
 #!/bin/bash
+#[ ! -f "/Library/LaunchDaemons/com.zdns.plist" ] && sudo cp com.zdns.plist /Library/LaunchDaemons/ && sudo chmod 644 /Library/LaunchDaemons/com.zdns.plist && sudo chown root:wheel /Library/LaunchDaemons/com.zdns.plist
+#
+#[ ! -f "/etc/newsyslog.d/com.zdns.conf" ] && sudo cp com.zdns.conf /etc/newsyslog.d/ && sudo chmod 644 /etc/newsyslog.d/com.zdns.conf && sudo chown root:wheel /etc/newsyslog.d/com.zdns.conf
+#
+#sudo launchctl list | grep -q com.zdns
+#if [ $? -ne 0 ]; then
+#    echo "服务未注册"
+#    [ -f "/Library/LaunchDaemons/com.zdns.plist" ] && sudo launchctl stop com.zdns && sudo launchctl unload /Library/LaunchDaemons/com.zdns.plist && sudo launchctl load /Library/LaunchDaemons/com.zdns.plist && sudo launchctl start com.zdns
+#else
+#    echo "服务已存在"
+#fi
+
+
 PID_FILE="/usr/local/var/run/zdns.pid"
 # 创建目录
 sudo mkdir -p /usr/local/var/run
